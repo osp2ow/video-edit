@@ -1,8 +1,8 @@
 window.FIREBASE_CONFIG = {
-  apiKey: "여기에-apiKey-붙여넣기",
-  authDomain: "video-editor-xxxxx.firebaseapp.com",
-  projectId: "video-editor-xxxxx",
-  storageBucket: "video-editor-xxxxx.appspot.com",
-  messagingSenderId: "000000000000",
-  appId: "1:000000000000:web:0000000000000000"
+  apiKey: "AIzaSyBsmPOU-BLjVDN747ffUvzHpTWZ1wCzIfg",
+  authDomain: "video-edit-7816d.firebaseapp.com",
+  projectId: "video-edit-7816d",
+  storageBucket: "video-edit-7816d.firebasestorage.app",
+  messagingSenderId: "498880657374",
+  appId: "1:498880657374:web:8085b78afeb675122e8f4f"
 };

@@ -37,7 +37,7 @@
   color-scheme: dark;
 }
 html, body { height: 100%; overscroll-behavior-x: none; }   /* 매직 마우스·트랙패드로 옆으로 밀 때 뒤로 가기 안 되게 */
-body { background: var(--bg); color: var(--fg); font: 13px/1.5 var(--font); }
+body { margin: 0; background: var(--bg); color: var(--fg); font: 13px/1.5 var(--font); }
 #root { height: 100%; }
 button, input, select { font: inherit; color: inherit; }
 .mono { font-family: var(--mono); font-variant-numeric: tabular-nums; }
@@ -72,7 +72,7 @@ button, input, select { font: inherit; color: inherit; }
 @keyframes pulse { 50% { opacity: 0.25; } }
 
 /* 패널 */
-.panel { background: var(--panel); overflow-y: auto; min-height: 0; padding: 4px 0 20px; }
+.panel { background: var(--panel); overflow-y: auto; min-height: 0; padding: 4px 0 20px; position: relative; }   /* 안쪽의 숨긴 파일 입력칸(절대 위치)이 페이지 밖으로 삐져나가 페이지가 아래로 스크롤되지 않게 */
 .panel.left { grid-area: left; border-right: 1px solid var(--line); }
 .panel.right { grid-area: right; border-left: 1px solid var(--line); }
 .panel section { padding: 14px 18px; border-bottom: 1px solid var(--line); display: grid; gap: 10px; }

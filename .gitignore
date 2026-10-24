@@ -3,3 +3,4 @@ dist
 *.mp4
 *.webm
 *.png
+deploy/video-editor

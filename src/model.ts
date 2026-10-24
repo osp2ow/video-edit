@@ -166,11 +166,26 @@ export const defaultCardStyle = (): CardStyle => ({
   color: '#ffffff', subColor: '#e6e6e6', align: 'center', dim: 0.72, x: 0.5, y: -1, w: 0,
 });
 export const cardStyleOf = (c: { style?: Partial<CardStyle> }): CardStyle => ({ ...defaultCardStyle(), ...(c.style || {}) });
+/** 엔딩 카드 안에서 바뀌는 문구 하나 (at: 카드가 시작된 뒤 몇 초부터) — 첫 문구는 카드의 title/sub */
+export interface CardPage { id: string; at: number; title: string; sub: string }
+export const FIRST_PAGE = 'first';
+/** 카드의 문구들 (시간 순, 카드 길이 안에 있는 것만). 첫 문구 = 카드의 title/sub */
+export function cardPages(c: { title: string; sub: string; dur: number; pages?: CardPage[] }): CardPage[] {
+  const rest = (c.pages || []).filter(p => p.at > 0 && p.at < c.dur - 0.05).sort((a, b) => a.at - b.at);
+  return [{ id: FIRST_PAGE, at: 0, title: c.title, sub: c.sub }, ...rest];
+}
+/** 카드 시작 후 dt초에 보이는 문구와 그 앞 문구 */
+export function cardPageAt(c: { title: string; sub: string; dur: number; pages?: CardPage[] }, dt: number) {
+  const ps = cardPages(c);
+  let i = 0;
+  for (let k = 1; k < ps.length; k++) if (ps[k].at <= dt + 1e-6) i = k;
+  return { page: ps[i], prev: i > 0 ? ps[i - 1] : null, since: dt - ps[i].at, index: i, count: ps.length };
+}
 export interface Fx {
   trType: TransType; trDur: number;
   fadeIn: number; fadeOut: number; fadeColor: 'black' | 'white'; audioFade: boolean;
   intro: { on: boolean; title: string; sub: string; dur: number; at?: number; style?: Partial<CardStyle> };   // at: 타임라인 시작 시각 (없으면 영상 처음)
-  outro: { on: boolean; title: string; sub: string; dur: number; at?: number; style?: Partial<CardStyle> };   // at 없으면 영상 끝에 붙음
+  outro: { on: boolean; title: string; sub: string; dur: number; at?: number; style?: Partial<CardStyle>; pages?: CardPage[] };   // at 없으면 영상 끝에 붙음 · pages: 카드 안에서 바뀌는 다음 문구들
   kenBurns: number;
   preset: string; filter: ColorFilter; vignette: number;
   logo: string | null;

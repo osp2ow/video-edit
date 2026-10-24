@@ -32,7 +32,7 @@ interface Props {
   onPip?: (pos: PipPos | null) => void;   // PIP 작은 화면 옮기기·크기 (null = 기본 자리로)
   onCaptionMove: (id: string, x: number, y: number) => void;
   onCardStyle?: (kind: 'intro' | 'outro', patch: Partial<CardStyle>) => void;
-  onEditCard?: (kind: 'intro' | 'outro') => void;
+  onEditCard?: (kind: 'intro' | 'outro', page?: string) => void;
   selCaption: string | null;
   onSelectCaption: (id: string | null) => void;
   onCaptionText: (id: string, text: string) => void;
@@ -81,7 +81,7 @@ export function Preview(props: Props) {
     const r = canvasRef.current!.getBoundingClientRect();
     const x = (e.clientX - r.left) * (W / r.width), y = (e.clientY - r.top) * (H / r.height);
     const tch = tcHit(x, y);
-    if (tch) { live.current.onPause?.(); live.current.onEditCard?.(tch.kind); return; }
+    if (tch) { live.current.onPause?.(); live.current.onEditCard?.(tch.kind, tch.page); return; }
     if (!capHit(x, y) && pipHit(x, y)) { live.current.onPip?.(null); return; }   // PIP 더블클릭: 기본 자리로
     const c = capHit(x, y);
     if (!c) return;
@@ -157,7 +157,7 @@ export function Preview(props: Props) {
 
   const range = (): [number, number] => [0, Math.max(live.current.video.duration || 0, live.current.tlEnd || 0)];
   /** 지금 보이는 인트로·엔딩 카드 글상자를 눌렀는지 (모서리 · 양옆 · 가운데) */
-  const tcHit = (x: number, y: number): { kind: 'intro' | 'outro'; box: CardLayoutResult; mode: Mode } | null => {
+  const tcHit = (x: number, y: number): { kind: 'intro' | 'outro'; box: CardLayoutResult; page: string; mode: Mode } | null => {
     const p = live.current;
     if (!p.onCardStyle || p.viewTrack) return null;
     const tc = activeTitleCard(canvasRef.current!.getContext('2d')!, W, H, p.now(), p.project, range());

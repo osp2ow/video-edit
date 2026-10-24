@@ -1,5 +1,5 @@
 // 효과 탭: 장면 전환 · 시작/끝 · 화면 필터 · 로고 · 박자 효과
-import { Fx, CardStyle, cardStyleOf, TransType, Cut, ColorFilter, ZoomSeg, Punch, TRANS_LIST, MarkKind, MARK_KINDS, MARK_AMT, markKind } from './model';
+import { Fx, CardPage, CardStyle, cardStyleOf, TransType, Cut, ColorFilter, ZoomSeg, Punch, TRANS_LIST, MarkKind, MARK_KINDS, MARK_AMT, markKind } from './model';
 import { FILTER_PRESETS } from './effects';
 import { CAPTION_FONTS } from './CaptionStudio';
 const useStateCS = React.useState;
@@ -22,6 +22,7 @@ interface Props {
   selCard?: 'intro' | 'outro' | null;
   stampKind: MarkKind;
   setStampKind: (k: MarkKind) => void;
+  outroDt?: () => number | null;   // 재생 위치가 엔딩 카드 안이면 카드 시작부터 몇 초인지
 }
 
 function Slider(p: { id: string; label: string; value: number; min: number; max: number; step: number; fmt: (v: number) => string; onChange: (v: number) => void }) {
@@ -36,7 +37,7 @@ function Slider(p: { id: string; label: string; value: number; min: number; max:
 const sec = (v: number) => v ? `${v.toFixed(1)}초` : '끔';
 const pct = (v: number) => `${Math.round(v * 100)}%`;
 
-export function FxPanel({ fx, setFx, selCut, setCutTr, onLogo, hasAudio, selFx, setSelFx, onAddZoom, onAddPunch, canAdd, stampKind, setStampKind, selCard }: Props) {
+export function FxPanel({ fx, setFx, selCut, setCutTr, onLogo, hasAudio, selFx, setSelFx, onAddZoom, onAddPunch, canAdd, stampKind, setStampKind, selCard, outroDt }: Props) {
   const selZoom = selFx?.kind === 'zoom' ? fx.zooms.find(z => z.id === selFx.id) : undefined;
   const selPunch = selFx?.kind === 'punch' ? fx.punches.find(z => z.id === selFx.id) : undefined;
   const upZoom = (patch: Partial<ZoomSeg>) => selZoom && setFx({ zooms: fx.zooms.map(z => z.id === selZoom.id ? { ...z, ...patch } : z) });
@@ -70,11 +71,13 @@ export function FxPanel({ fx, setFx, selCut, setCutTr, onLogo, hasAudio, selFx, 
           <div className={`subbox ${selCard === 'outro' ? 'sel-card' : ''}`}>
             <span className="small sub-title">엔딩 카드</span>
             <OutroTemplates fx={fx} setFx={setFx} />
+            {!!fx.outro.pages?.length && <span className="small dim">1번째 문구 · 처음부터</span>}
             <textarea id="outro-title" className="card-text title big" rows={5} placeholder="제목 (예: 주니퍼 실용음악학원) · Enter로 줄 나누기" value={fx.outro.title} onChange={e => setFx({ outro: { ...fx.outro, title: e.target.value } })} aria-label="엔딩 카드 제목" />
             <input id="outro-sub" type="text" className="card-sub-in" placeholder="계정명 (예: @juniper_music)" value={fx.outro.sub} onChange={e => setFx({ outro: { ...fx.outro, sub: e.target.value } })} aria-label="엔딩 카드 부제 (계정명)" />
             <p className="small dim">화면 가이드라인 안에 맞춰 길면 자동으로 줄이 바뀌고 글자가 작아져요</p>
+            <OutroPages fx={fx} setFx={setFx} nowDt={outroDt} />
             <CardStyleBox kind="outro" fx={fx} setFx={setFx} />
-            <Slider id="outro-dur" label="길이 (타임라인 자막 줄에서도 조절)" value={fx.outro.dur} min={0.5} max={15} step={0.1} fmt={v => `${v.toFixed(1)}초`} onChange={v => setFx({ outro: { ...fx.outro, dur: v } })} />
+            <Slider id="outro-dur" label="길이 (타임라인 자막 줄에서도 조절)" value={fx.outro.dur} min={0.5} max={Math.max(15, Math.ceil(fx.outro.dur))} step={0.1} fmt={v => `${v.toFixed(1)}초`} onChange={v => setFx({ outro: { ...fx.outro, dur: v } })} />
           </div>
         )}
       </section>
@@ -314,6 +317,45 @@ interface OutroTpl { name: string; title: string; sub?: string; style?: any; bui
 const BUILTIN_OUTRO: OutroTpl[] = [
   { name: 'DM 악보 안내', title: '팔로우 + 댓글\n남겨주시면\n\nDM으로 악보\n발송해드립니다!', builtin: true },
 ];
+/** 엔딩 카드 안에서 바뀌는 다음 문구들 (자막처럼 중간에 글자가 바뀜) */
+function OutroPages({ fx, setFx, nowDt }: { fx: Fx; setFx: (patch: Partial<Fx>) => void; nowDt?: () => number | null }) {
+  const o = fx.outro;
+  const pages = [...(o.pages || [])].sort((a, b) => a.at - b.at);
+  const setPage = (id: string, patch: Partial<CardPage>) => setFx({ outro: { ...o, pages: pages.map(p => p.id === id ? { ...p, ...patch } : p) } });
+  const remove = (id: string) => setFx({ outro: { ...o, pages: pages.filter(p => p.id !== id) } });
+  const add = () => {
+    // 재생 위치가 엔딩 카드 안이면 그 자리부터, 아니면 마지막 문구 뒤 남은 시간의 가운데 (남은 시간이 짧으면 카드를 늘려서 뒤에)
+    const dt = nowDt?.() ?? null, last = pages.length ? pages[pages.length - 1].at : 0;
+    let at: number, dur = o.dur;
+    if (dt !== null && dt > 0.3 && dt < dur - 0.3 && !pages.some(p => Math.abs(p.at - dt) < 0.3)) at = dt;
+    else if (dur - last >= 2) at = last + (dur - last) / 2;
+    else { at = dur; dur = dur + 2.5; }
+    const id = 'pg' + Date.now().toString(36);
+    setFx({ outro: { ...o, dur: Math.round(dur * 10) / 10, pages: [...pages, { id, at: Math.round(at * 10) / 10, title: '', sub: o.sub }] } });
+    setTimeout(() => (document.getElementById(`outro-page-${id}-title`) as HTMLTextAreaElement | null)?.focus(), 60);
+  };
+  return (
+    <div className="outro-pages">
+      {pages.map((pg, i) => {
+        const hidden = pg.at >= o.dur - 0.05;
+        return (
+          <div key={pg.id} className={`outro-page ${hidden ? 'off' : ''}`}>
+            <div className="row between">
+              <span className="small sub-title">{i + 2}번째 문구 · {pg.at.toFixed(1)}초부터{hidden ? ' (카드 길이 밖이라 안 보여요)' : ''}</span>
+              <button type="button" className="btn ghost sm" onClick={() => remove(pg.id)} aria-label={`${i + 2}번째 문구 빼기`}>빼기</button>
+            </div>
+            <textarea id={`outro-page-${pg.id}-title`} className="card-text title" rows={3} placeholder="이 시점부터 보일 문구 · Enter로 줄 나누기" value={pg.title} onChange={e => setPage(pg.id, { title: e.target.value })} aria-label={`엔딩 카드 ${i + 2}번째 문구`} />
+            <input id={`outro-page-${pg.id}-sub`} type="text" className="card-sub-in" placeholder="계정명 (비우면 안 보여요)" value={pg.sub} onChange={e => setPage(pg.id, { sub: e.target.value })} aria-label={`엔딩 카드 ${i + 2}번째 부제`} />
+            <Slider id={`outro-page-${pg.id}-at`} label="바뀌는 시점 (카드 시작부터)" value={Math.min(pg.at, o.dur)} min={0.3} max={Math.max(0.4, o.dur - 0.3)} step={0.1} fmt={v => `${v.toFixed(1)}초`} onChange={v => setPage(pg.id, { at: v })} />
+          </div>
+        );
+      })}
+      <button type="button" className="btn sm" onClick={add}>+ 문구 추가 (카드 안에서 바뀜)</button>
+      {pages.length > 0 && <p className="small dim">타임라인 자막 줄의 엔딩 카드에서 문구 사이 경계선을 끌어도 바뀌는 시점을 옮길 수 있어요</p>}
+    </div>
+  );
+}
+
 const TPL_KEY = 'pve.outroTpl';
 const loadTpls = (): OutroTpl[] => { try { return JSON.parse(localStorage.getItem(TPL_KEY) || '[]'); } catch { return []; } };
 const saveTpls = (l: OutroTpl[]) => { try { localStorage.setItem(TPL_KEY, JSON.stringify(l)); } catch { /* 저장 불가 */ } };

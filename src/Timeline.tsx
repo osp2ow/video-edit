@@ -1,5 +1,5 @@
 // 타임라인: 마디 눈금(고정) + 앵글 전환 줄 + 파형 줄(영상·앵글들·녹음본, 세로 스크롤) + 재생 위치
-import { Project, Cut, Caption, ZoomSeg, Punch, getFx, markKind, cardSpan, SheetClip, sheetClipsOf, sheetClipEnd, Skip, mergeSkips, trimOf, Clip, clipsOf, clipEnd, sheetPos, MARK_KINDS, MARK_AMT, MarkKind, MAIN, TRANS_LIST, TransType, barAt, barStart, beatLen, barLen, normalizeCuts, sheetStart, sheetEnd, Fx, clipBarLen, snapTime, bpmAt, recKeyOf } from './model';
+import { Project, Cut, Caption, ZoomSeg, Punch, getFx, markKind, cardSpan, cardPages, CardPage, SheetClip, sheetClipsOf, sheetClipEnd, Skip, mergeSkips, trimOf, Clip, clipsOf, clipEnd, sheetPos, MARK_KINDS, MARK_AMT, MarkKind, MAIN, TRANS_LIST, TransType, barAt, barStart, beatLen, barLen, normalizeCuts, sheetStart, sheetEnd, Fx, clipBarLen, snapTime, bpmAt, recKeyOf } from './model';
 import { Track, PEAKS_RATE } from './analysis';
 
 const { useRef, useEffect, useState } = React;
@@ -31,7 +31,7 @@ interface Props {
   onCaptions: (list: Caption[]) => void;
   onSelectCaption: (id: string | null) => void;
   onEditCaption: (id: string) => void;
-  onCard: (kind: 'intro' | 'outro', patch: { at?: number; dur?: number }) => void;
+  onCard: (kind: 'intro' | 'outro', patch: { at?: number; dur?: number; pages?: CardPage[] }) => void;
   onSelectCard: (kind: 'intro' | 'outro' | null, edit?: boolean) => void;
   selCard: 'intro' | 'outro' | null;
   pick: { a: number | null; b: number | null } | null;   // 추출 구간 고르는 중
@@ -268,7 +268,19 @@ export function Timeline(props: Props) {
         ctx.fillStyle = c.card ? (sel ? '#a9cbff' : 'rgba(127,178,255,0.8)') : sel ? '#ffd27a' : 'rgba(236,230,218,0.78)';
         ctx.beginPath(); ctx.roundRect(xa, C_Y + 2, Math.max(3, xb - xa), CROW - 4, 4); ctx.fill();
         if (sel) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); }
-        if (xb - xa > 20) {
+        const pgs = c.card === 'outro' ? cardPages(getFx(p).outro) : [];
+        if (pgs.length > 1) {
+          // 엔딩 카드 안에서 바뀌는 문구들: 경계선 + 문구마다 글자
+          pgs.forEach((pg, i) => {
+            const pa = X(c.start + pg.at), pb = i + 1 < pgs.length ? X(c.start + pgs[i + 1].at) : xb;
+            if (i > 0) { ctx.fillStyle = '#1b1712'; ctx.fillRect(Math.round(pa) - 1, C_Y + 2, 2, CROW - 4); }
+            if (pb - pa > 16) {
+              ctx.save(); ctx.beginPath(); ctx.rect(pa + 4, C_Y, pb - pa - 8, CROW); ctx.clip();
+              ctx.fillStyle = '#1b1712'; ctx.fillText((i === 0 ? '엔딩 · ' : '') + ((pg.title || pg.sub || '(빈 문구)').replace(/\n/g, ' ')), Math.round(pa + 6), C_Y + CROW / 2);
+              ctx.restore();
+            }
+          });
+        } else if (xb - xa > 20) {
           ctx.save(); ctx.beginPath(); ctx.rect(xa + 4, C_Y, xb - xa - 8, CROW); ctx.clip();
           ctx.fillStyle = '#1b1712'; ctx.fillText((c.text || '').replace(/\n/g, ' '), Math.round(xa + 6), C_Y + CROW / 2);
           ctx.restore();
@@ -922,7 +934,7 @@ export function Timeline(props: Props) {
     return () => { window.removeEventListener('keydown', onKey, true); window.removeEventListener('pointerdown', outside, true); };
   }, []);
   const zoomRef = useRef<(f: number, at?: number) => void>(() => {});
-  const capDrag = useRef<{ id: string; mode: 'move' | 'start' | 'end'; grab: number; len: number; base?: Caption[] } | null>(null);
+  const capDrag = useRef<{ id: string; mode: 'move' | 'start' | 'end' | 'page'; grab: number; len: number; base?: Caption[]; page?: string } | null>(null);
   const captionAt = (clientX: number) => {
     const r = canvas.current!.getBoundingClientRect();
     const x = clientX - r.left, v = view.current;
@@ -935,6 +947,10 @@ export function Timeline(props: Props) {
       if (Math.abs(x - xb) <= 6) return { c: sc, mode: 'end' as const };
       if (Math.abs(x - xa) <= 6) return { c: sc, mode: 'start' as const };
     }
+    // 엔딩 카드 안 문구 경계선 (끌어서 바뀌는 시점 옮기기)
+    const oc = list.find(c => c.card === 'outro');
+    if (oc) for (const pg of cardPages(getFx(live.current.project).outro).slice(1))
+      if (Math.abs((oc.start + pg.at - v.start) * v.pps - x) <= 5) return { c: oc, mode: 'page' as const, page: pg.id };
     for (let i = list.length - 1; i >= 0; i--) {
       const c = list[i];
       const xa = (c.start - v.start) * v.pps, xb = (c.end - v.start) * v.pps;
@@ -1115,7 +1131,7 @@ export function Timeline(props: Props) {
       const hitc = captionAt(e.clientX);
       if (hitc && hitc.c.card) {
         live.current.onSelectCaption(null); live.current.onSelectCard(hitc.c.card);
-        capDrag.current = { id: hitc.c.id, mode: hitc.mode, grab: timeAt(e.clientX) - hitc.c.start, len: hitc.c.end - hitc.c.start };
+        capDrag.current = { id: hitc.c.id, mode: hitc.mode, grab: timeAt(e.clientX) - hitc.c.start, len: hitc.c.end - hitc.c.start, page: (hitc as any).page };
         return;
       }
       if (hitc) {
@@ -1378,6 +1394,15 @@ export function Timeline(props: Props) {
       const d = capDrag.current, k = d.id.slice(2) as 'intro' | 'outro';
       const tm = timeAt(e.clientX), dur = live.current.duration || 1e9;
       const [a, b] = cardSpan(getFx(live.current.project), k, 0, live.current.duration || 0);
+      if (d.mode === 'page' && d.page) {
+        // 문구 경계선: 앞뒤 문구와 0.3초 넘게 떨어진 곳까지만
+        const o = getFx(live.current.project).outro, ps = cardPages(o), i = ps.findIndex(x => x.id === d.page);
+        if (i < 1) return;
+        const lo = ps[i - 1].at + 0.3, hi = (i + 1 < ps.length ? ps[i + 1].at : o.dur) - 0.3;
+        const at = Math.round(Math.max(lo, Math.min(hi, magnet(tm, e.altKey) - a)) * 100) / 100;
+        live.current.onCard(k, { pages: (o.pages || []).map(x => x.id === d.page ? { ...x, at } : x) });
+        return;
+      }
       if (d.mode === 'move') { const st = Math.max(0, Math.min(dur - d.len, magnet(tm - d.grab, e.altKey))); live.current.onCard(k, { at: st }); }
       else if (d.mode === 'start') { const st = Math.max(0, Math.min(b - 0.5, magnet(tm, e.altKey))); live.current.onCard(k, { at: st, dur: Math.round((b - st) * 100) / 100 }); }
       else { const en = Math.min(dur, Math.max(a + 0.5, magnet(tm, e.altKey))); live.current.onCard(k, { at: a, dur: Math.round((en - a) * 100) / 100 }); }

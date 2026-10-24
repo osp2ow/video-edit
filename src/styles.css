@@ -467,3 +467,6 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .usage-row select { max-width: 60%; font-size: 12px; }
 .cost-total { font-size: 15px; }
 .usage .note.small { margin: 2px 0 0; font-size: 11px; color: var(--dim); }
+.outro-pages { display: grid; gap: 8px; }
+.outro-page { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--line); border-radius: 8px; }
+.outro-page.off { opacity: 0.55; }

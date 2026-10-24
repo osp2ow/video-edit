@@ -1,4 +1,4 @@
-import { shiftProject, recKey, recKeyOf, MAIN_REC, RecClip, trimOf, bpmAt, mainShift, recAtOf, sheetClipsOf, sheetClipEnd, sheetHome, SheetClip, clipEnd, barAt, Project, Ratio, CardLayout, Cut, CutSnap, MAIN, defaultProject, defaultLayouts, barBeat, barStart, barLen, beatLen, fmtTime, angleAt, setCutAt, snapTime, normalizeCuts, sheetStart, sheetEnd, sheetIndex, barOfSheet, VideoXf, getXf, withXf, defaultXf, Caption, CaptionStyle, Fx, getFx, LAYOUT_LABEL, clipsOf, timelineEnd, Clip, RATIOS, RATIO_LABEL, MarkKind, Punch, MARK_AMT } from './model';
+import { shiftProject, recKey, recKeyOf, MAIN_REC, RecClip, trimOf, bpmAt, mainShift, recAtOf, sheetClipsOf, sheetClipEnd, sheetHome, SheetClip, clipEnd, barAt, Project, Ratio, CardLayout, Cut, CutSnap, MAIN, defaultProject, defaultLayouts, barBeat, barStart, barLen, beatLen, fmtTime, angleAt, setCutAt, snapTime, normalizeCuts, sheetStart, sheetEnd, sheetIndex, barOfSheet, VideoXf, getXf, withXf, defaultXf, Caption, CaptionStyle, Fx, getFx, LAYOUT_LABEL, clipsOf, timelineEnd, Clip, RATIOS, RATIO_LABEL, MarkKind, Punch, MARK_AMT, cardSpan, FIRST_PAGE } from './model';
 import { captionStyleOf, styleFor, CAP_SHARED, ownLook, ownPos } from './render';
 import { CaptionStudio } from './CaptionStudio';
 import { Angle, ANGLE_COLORS, makeAngleVideo, followMaster, activeSource } from './angles';
@@ -1738,7 +1738,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             ratio={ratio} layout={layout} onLayout={setLayout} showSafe={showSafe} hasVideo={hasVideo} angles={angles} sources={srcMap} sheets={sheetMap}
             onCaptionMove={moveCaption}
             onCardStyle={(k, patch) => { const f = getFx(projRef.current); setFx({ [k]: { ...f[k], style: { ...(f[k].style || {}), ...patch } } } as Partial<Fx>); }}
-            onEditCard={k => { setSelCard(k); setRightTab('fx'); setTimeout(() => { const el = document.getElementById(k + '-title') as HTMLTextAreaElement | null; el?.focus(); el?.select(); }, 60); }}
+            onEditCard={(k, page) => { setSelCard(k); setRightTab('fx'); setTimeout(() => { const el = document.getElementById(page && page !== FIRST_PAGE ? `outro-page-${page}-title` : k + '-title') as HTMLTextAreaElement | null; el?.focus(); el?.select(); }, 60); }}
             selCaption={selCaption} onSelectCaption={setSelCaption} onCaptionText={(id, text) => updateCaption(id, { text })}
             cropMode={cropMode} viewTrack={viewTrack} viewLabel={viewTrack ? `${viewNum}번 앵글 보는 중` : ''} onXf={(id, xf) => setProject({ frames: withXf(projRef.current, ratio, id, xf) })}
             onPip={pos => { const pp = { ...(projRef.current.pip || {}) }; if (pos) pp[ratio] = pos; else delete pp[ratio]; setProject({ pip: pp }); }} />
@@ -1887,7 +1887,8 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
           )}
         </section>
         </>) : (
-          <FxPanel fx={fx} setFx={setFx} selCard={selCard} selFx={selFx} setSelFx={setSelFx} onAddZoom={addZoom} onAddPunch={() => addPunchAt(tnow())} stampKind={stampKind} setStampKind={setStampKind} canAdd={hasVideo} selCut={selCutInfo} setCutTr={setCutTr} onLogo={onLogo} hasAudio={!!(rTrack || vTrack)} />
+          <FxPanel fx={fx} setFx={setFx} selCard={selCard} selFx={selFx} setSelFx={setSelFx} onAddZoom={addZoom} onAddPunch={() => addPunchAt(tnow())} stampKind={stampKind} setStampKind={setStampKind} canAdd={hasVideo} selCut={selCutInfo} setCutTr={setCutTr} onLogo={onLogo} hasAudio={!!(rTrack || vTrack)}
+            outroDt={() => { const f = getFx(projRef.current); const [a, b] = cardSpan(f, 'outro', 0, Math.max(videoRef.current?.duration || 0, endRef.current || 0)); const t = tnow(); return t >= a && t < b ? t - a : null; }} />
         )}
       </aside>
 

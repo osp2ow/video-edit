@@ -2,7 +2,7 @@
 // 순서: 영상(전환·분할·박자 효과) → 비네트 → 악보 카드 → 자막 → 로고 → 플래시 → 인트로/엔딩 카드 → 페이드
 import { colorFilterFor, joinFilter } from './colormatch';
 import { retouchFaces } from './face';
-import { CardLayout, Project, Fx, ColorFilter, TransType, MAIN, getFx, getXf, angleAt, barLen, beatLen, LAYOUT_LABEL, cardSpan, ratioOfWH, cardAlpha, srcAt, CardStyle, cardStyleOf, NEUTRAL_FILTER, sheetClipAt } from './model';
+import { CardLayout, Project, Fx, ColorFilter, TransType, MAIN, getFx, getXf, angleAt, barLen, beatLen, LAYOUT_LABEL, cardSpan, ratioOfWH, cardAlpha, srcAt, CardStyle, cardStyleOf, NEUTRAL_FILTER, sheetClipAt, cardPageAt, FIRST_PAGE } from './model';
 import { SheetData } from './sheet';
 import { Angle } from './angles';
 import { drawVideo, drawCard, drawCaptions, FONT, safeZones } from './render';
@@ -315,11 +315,13 @@ export function layoutTitleCard(ctx: CanvasRenderingContext2D, W: number, H: num
   return { x: cx - bw / 2, y: cy - total / 2, w: bw, h: total, cx, cy, tl, sl, ts, ss, lw, lh, st };
 }
 
-function drawTitleCard(ctx: CanvasRenderingContext2D, W: number, H: number, title: string, sub: string, a: number, logo: HTMLImageElement | null, rise: number, st: CardStyle) {
+/** 인트로·엔딩 카드: 어두운 배경 + 글상자. bg=false면 글자만, textA는 글자만의 투명도 (문구가 바뀔 때) */
+function drawTitleCard(ctx: CanvasRenderingContext2D, W: number, H: number, title: string, sub: string, a: number, logo: HTMLImageElement | null, rise: number, st: CardStyle, bg = true, textA = 1) {
   if (a <= 0) return;
   ctx.save();
-  ctx.globalAlpha = a;
-  ctx.fillStyle = `rgba(8,7,5,${st.dim})`; ctx.fillRect(0, 0, W, H);
+  if (bg) { ctx.globalAlpha = a; ctx.fillStyle = `rgba(8,7,5,${st.dim})`; ctx.fillRect(0, 0, W, H); }
+  ctx.globalAlpha = a * textA;
+  if (ctx.globalAlpha <= 0.001) { ctx.restore(); return; }
   const L = layoutTitleCard(ctx, W, H, title, sub, st, logo);
   const fam = `"${st.font}", ${FONT}`;
   const tx = st.align === 'left' ? L.x : st.align === 'right' ? L.x + L.w : L.cx;
@@ -338,13 +340,16 @@ function drawTitleCard(ctx: CanvasRenderingContext2D, W: number, H: number, titl
 }
 
 /** 지금 보이는 인트로/엔딩 카드와 글상자 (미리보기에서 끌어 옮기기용) */
-export function activeTitleCard(ctx: CanvasRenderingContext2D, W: number, H: number, t: number, p: Project, range: [number, number]): { kind: 'intro' | 'outro'; box: CardLayoutResult } | null {
+export function activeTitleCard(ctx: CanvasRenderingContext2D, W: number, H: number, t: number, p: Project, range: [number, number]): { kind: 'intro' | 'outro'; box: CardLayoutResult; page: string } | null {
   const fx = getFx(p), [r0, r1] = range, logo = logoImg(fx.logo);
   for (const kind of ['outro', 'intro'] as const) {
     const c = fx[kind], lg = kind === 'outro' ? logo : null;
-    if (!c.on || !(c.title || c.sub || lg)) continue;
+    if (!c.on || !(c.title || c.sub || lg || (kind === 'outro' && fx.outro.pages?.length))) continue;
     const [st, en] = cardSpan(fx, kind, r0, r1);
-    if (t >= st && t <= en) return { kind, box: layoutTitleCard(ctx, W, H, c.title, c.sub, cardStyleOf(c), lg) };
+    if (t >= st && t <= en) {
+      const pg = kind === 'outro' ? cardPageAt(fx.outro, t - st).page : { id: FIRST_PAGE, title: c.title, sub: c.sub };
+      return { kind, page: pg.id, box: layoutTitleCard(ctx, W, H, pg.title, pg.sub, cardStyleOf(c), lg) };
+    }
   }
   return null;
 }
@@ -411,10 +416,21 @@ export function renderComposite(ctx: CanvasRenderingContext2D, W: number, H: num
     const [st] = cardSpan(fx, 'intro', r0, r1), dt = t - st, d = fx.intro.dur;
     if (dt >= 0 && dt < d) drawTitleCard(ctx, W, H, fx.intro.title, fx.intro.sub, Math.min(1, dt / 0.3, (d - dt) / 0.5), null, Math.max(0, 1 - dt / 0.6), cardStyleOf(fx.intro));
   }
-  if (fx.outro.on && (fx.outro.title || fx.outro.sub || logo)) {
-    const [st, en] = cardSpan(fx, 'outro', r0, r1), d = fx.outro.dur, dt = t - st;
-    void en; const tail = 1;   // 엔딩 카드는 끝까지 같은 밝기 그대로 (중간에 서서히 밝아지지 않게)
-    if (dt >= 0 && dt <= d) drawTitleCard(ctx, W, H, fx.outro.title, fx.outro.sub, Math.max(0, Math.min(1, dt / 0.5, tail)), logo, Math.max(0, 1 - dt / 0.6), cardStyleOf(fx.outro));
+  if (fx.outro.on && (fx.outro.title || fx.outro.sub || logo || fx.outro.pages?.length)) {
+    const [st] = cardSpan(fx, 'outro', r0, r1), d = fx.outro.dur, dt = t - st;
+    // 엔딩 카드는 끝까지 같은 밝기 그대로 (중간에 서서히 밝아지지 않게)
+    if (dt >= 0 && dt <= d) {
+      const a = Math.max(0, Math.min(1, dt / 0.5)), cs = cardStyleOf(fx.outro);
+      const { page, prev, since } = cardPageAt(fx.outro, dt);
+      if (!prev) drawTitleCard(ctx, W, H, page.title, page.sub, a, logo, Math.max(0, 1 - dt / 0.6), cs);
+      else {
+        // 다음 문구로: 배경은 그대로, 앞 문구는 빠르게 사라지고 새 문구가 살짝 올라오며 나타남
+        drawTitleCard(ctx, W, H, '', '', a, null, 0, cs, true, 0);
+        const out = 1 - clamp01(since / 0.25), inn = clamp01((since - 0.1) / 0.35);
+        if (out > 0) drawTitleCard(ctx, W, H, prev.title, prev.sub, a, logo, 0, cs, false, out);
+        drawTitleCard(ctx, W, H, page.title, page.sub, a, logo, Math.max(0, 1 - since / 0.6), cs, false, inn);
+      }
+    }
   }
 
   // 6) 페이드 인 · 아웃

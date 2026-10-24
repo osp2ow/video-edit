@@ -111,6 +111,16 @@ function drawCover(ctx: CanvasRenderingContext2D, v: HTMLVideoElement | null, x:
   ctx.drawImage(v, (v.videoWidth - sw) / 2, (v.videoHeight - sh) / 2, sw, sh, x, y, w, h);
 }
 
+/** PIP 작은 화면 자리 (픽셀). 저장된 위치가 없으면 기본 자리(오른쪽 위) */
+export function pipBox(W: number, H: number, p: Project) {
+  const ratio = ratioOf(W, H);
+  const ar = ratio === '16:9' ? 9 / 16 : 1.25;   // 높이/폭
+  const pos = p.pip?.[ratio];
+  const w = W * (pos?.w ?? (ratio === '9:16' ? 0.4 : ratio === '4:5' ? 0.36 : 0.3)), h = w * ar;
+  const x = pos ? pos.x * W : W - w - W * 0.04, y = pos ? pos.y * H : ratio === '9:16' ? H * 0.16 : H * 0.05;
+  return { x, y, w, h, ar };
+}
+
 /** 앵글 하나(또는 분할·PIP 구성)를 화면 전체에 그리기 */
 export function drawSource(ctx: CanvasRenderingContext2D, W: number, H: number, id: string, t: number, env: Env) {
   const fx = getFx(env.project);
@@ -144,8 +154,7 @@ export function drawSource(ctx: CanvasRenderingContext2D, W: number, H: number, 
   } else if (id === 'pip') {
     drawVideo(ctx, W, H, videoFor(env, MAIN, t), getXf(env.project, ratio, MAIN));
     const small = ids[1] ? videoFor(env, ids[1], t) : null;
-    const w = W * (ratio === '9:16' ? 0.4 : ratio === '4:5' ? 0.36 : 0.3), h = w * (ratio === '16:9' ? 9 / 16 : 1.25);
-    const x = W - w - W * 0.04, y = ratio === '9:16' ? H * 0.16 : H * 0.05;
+    const { x, y, w, h } = pipBox(W, H, env.project);
     ctx.save();
     if (ids[1]) ctx.filter = fil(ids[1]);
     ctx.beginPath(); ctx.roundRect(x, y, w, h, w * 0.06); ctx.clip();

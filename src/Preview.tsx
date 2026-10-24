@@ -1,5 +1,5 @@
 // 미리보기: 렌더러 결과 + 악보 카드 드래그/크기 조절 + 영상 위치 이동·크기·자르기 + 스냅/안전 영역
-import { CardLayout, Project, Ratio, VideoXf, CaptionStyle, CardStyle, getXf, cardAlpha, getFx } from './model';
+import { CardLayout, Project, Ratio, VideoXf, CaptionStyle, CardStyle, getXf, cardAlpha, getFx, angleAt, srcAt, PipPos } from './model';
 import { styleFor } from './render';
 import { SheetData } from './sheet';
 import { safeZones } from './render';
@@ -7,7 +7,7 @@ export { safeZones };
 import { cardBox, drawVideo, drawCard, drawCaptions, FONT, videoRect, croppedRect, captionBox, captionStyleOf, activeCaptions } from './render';
 import { Angle, activeSource } from './angles';
 import { isExporting } from './exporter';
-import { renderComposite, sheetAt, activeTitleCard, cardSafeRect, clampCardY, CardLayoutResult } from './effects';
+import { renderComposite, sheetAt, activeTitleCard, cardSafeRect, clampCardY, CardLayoutResult, pipBox } from './effects';
 
 const { useRef, useEffect, useState } = React;
 
@@ -29,6 +29,7 @@ interface Props {
   viewTrack: string | null;   // 타임라인에서 고른 앵글만 보기
   viewLabel: string;
   onXf: (id: string, xf: VideoXf) => void;
+  onPip?: (pos: PipPos | null) => void;   // PIP 작은 화면 옮기기·크기 (null = 기본 자리로)
   onCaptionMove: (id: string, x: number, y: number) => void;
   onCardStyle?: (kind: 'intro' | 'outro', patch: Partial<CardStyle>) => void;
   onEditCard?: (kind: 'intro' | 'outro') => void;
@@ -53,7 +54,7 @@ function pickSource(p: Props) {
 
 const curSheet = (p: Props) => sheetAt(p.project, p.sheet, p.sheets, p.now());
 
-type Mode = 'move' | 'resize' | 'video' | 'cl' | 'cr' | 'ct' | 'cb' | 'cap' | 'tc' | 'tcw' | 'tcs';
+type Mode = 'move' | 'resize' | 'video' | 'cl' | 'cr' | 'ct' | 'cb' | 'cap' | 'tc' | 'tcw' | 'tcs' | 'pip' | 'pipr';
 interface Drag {
   mode: Mode;
   sx: number; sy: number;
@@ -62,6 +63,7 @@ interface Drag {
   cap0?: CaptionStyle; capId?: string;
   tcKind?: 'intro' | 'outro'; tcBox?: CardLayoutResult;   // 인트로·엔딩 카드 글상자
   guides: { x?: number; y?: number }[];
+  pip0?: { x: number; y: number; w: number; h: number; ar: number };   // PIP 작은 화면 (드래그 시작 때)
 }
 
 export function Preview(props: Props) {
@@ -80,6 +82,7 @@ export function Preview(props: Props) {
     const x = (e.clientX - r.left) * (W / r.width), y = (e.clientY - r.top) * (H / r.height);
     const tch = tcHit(x, y);
     if (tch) { live.current.onPause?.(); live.current.onEditCard?.(tch.kind); return; }
+    if (!capHit(x, y) && pipHit(x, y)) { live.current.onPip?.(null); return; }   // PIP 더블클릭: 기본 자리로
     const c = capHit(x, y);
     if (!c) return;
     live.current.onPause?.();
@@ -121,6 +124,12 @@ export function Preview(props: Props) {
             // 악보 카드는 타임라인에 악보가 있는 동안에만 (없는 곳에서는 테두리·손잡이도 숨김)
             const cardDrag = drag.current?.mode === 'move' || drag.current?.mode === 'resize';
             if (cardDrag || cardVisible(project, sheet, t)) drawEditing(ctx, w, h, ratio, layout, sheet, showSafe, drag.current, hover.current, project);
+          }
+          // PIP 작은 화면: 마우스를 올리거나 옮기는 중이면 테두리·모서리 손잡이
+          {
+            const pm = drag.current?.mode === 'pip' || drag.current?.mode === 'pipr' ? drag.current.mode : hover.current === 'pip' || hover.current === 'pipr' ? hover.current : null;
+            const pb = pm && !clean ? pipNow() : null;
+            if (pb) drawPipOutline(ctx, w, pb, drag.current?.mode === pm ? drag.current.guides : [], h);
           }
           // 영상을 옮기는 중이면 영상 테두리와 가이드
           if (drag.current?.mode === 'video' && src && xf) drawVideoGuides(ctx, w, h, src.video, xf, drag.current.guides);
@@ -173,6 +182,23 @@ export function Preview(props: Props) {
     return null;
   };
 
+  /** 지금 화면에 PIP 작은 화면이 보이면 그 자리 (픽셀) */
+  const pipNow = () => {
+    const p = live.current;
+    if (p.viewTrack || p.cropMode || !p.hasVideo || !p.angles.length || p.clean) return null;
+    const t = p.now();
+    if (angleAt(p.project.cuts, t) !== 'pip') return null;
+    if (srcAt(p.project, t, p.video.duration || 0)?.clip.src) return null;   // 이어 붙인 영상 구간엔 PIP 없음
+    return pipBox(W, H, p.project);
+  };
+  const pipHit = (x: number, y: number): Mode | null => {
+    const b = pipNow();
+    if (!b) return null;
+    if (Math.hypot(x - (b.x + b.w), y - (b.y + b.h)) < W * 0.042) return 'pipr';
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return 'pip';
+    return null;
+  };
+
   const hit = (x: number, y: number): Mode | null => {
     const p = live.current;
     const src = source();
@@ -191,6 +217,9 @@ export function Preview(props: Props) {
     if (tch) return tch.mode;
     const cap = capHit(x, y);
     if (cap) return 'cap';
+    // PIP는 악보 카드에 가려져도 잡을 수 있게 카드보다 먼저
+    const ph = pipHit(x, y);
+    if (ph) return ph;
     if (!cardVisible(p.project, curSheet(p), live.current.now())) return src ? 'video' : null;
     const g = cardBox(p.layout, W, H, curSheet(p), p.project);
     const hr = W * 0.03;
@@ -199,7 +228,7 @@ export function Preview(props: Props) {
     return src ? 'video' : null;
   };
 
-  const CURSOR: Record<Mode, string> = { tc: 'move', tcw: 'ew-resize', tcs: 'nwse-resize', cap: 'move', move: 'grab', resize: 'nwse-resize', video: 'move', cl: 'ew-resize', cr: 'ew-resize', ct: 'ns-resize', cb: 'ns-resize' };
+  const CURSOR: Record<Mode, string> = { tc: 'move', tcw: 'ew-resize', tcs: 'nwse-resize', cap: 'move', move: 'grab', resize: 'nwse-resize', video: 'move', pip: 'move', pipr: 'nwse-resize', cl: 'ew-resize', cr: 'ew-resize', ct: 'ns-resize', cb: 'ns-resize' };
 
   const onDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const { x, y } = toCanvas(e);
@@ -213,7 +242,7 @@ export function Preview(props: Props) {
     if (hitCap) live.current.onSelectCaption(hitCap.id);
     drag.current = { mode: m, sx: x, sy: y, start: { ...live.current.layout }, guides: [],
       cap0: hitCap ? styleFor(live.current.project, live.current.ratio, hitCap) : undefined, capId: hitCap?.id,
-      tcKind: tch?.kind, tcBox: tch?.box,
+      tcKind: tch?.kind, tcBox: tch?.box, pip0: m === 'pip' || m === 'pipr' ? pipNow() || undefined : undefined,
       xf0: src ? JSON.parse(JSON.stringify(src.xf)) : null, id: src?.id || 'main', vw: src?.vw || 1, vh: src?.vh || 1 };
   };
 
@@ -250,6 +279,28 @@ export function Preview(props: Props) {
         const r0 = Math.max(1, Math.hypot(d.sx - b.cx, d.sy - b.cy)), r1 = Math.hypot(x - b.cx, y - b.cy);
         const k = r1 / r0, cl = (v: number) => Math.max(0.4, Math.min(2.5, Math.round(v * 100) / 100));
         p.onCardStyle?.(d.tcKind, { ...keep, size: cl(st.size * k), subSize: cl(st.subSize * k) });
+      }
+      return;
+    }
+    if ((d.mode === 'pip' || d.mode === 'pipr') && d.pip0) {
+      // PIP 작은 화면: 옮기기 (가장자리·가운데·안전 영역에 자석) / 오른쪽 아래 모서리로 크기
+      const b = d.pip0, mg = W * 0.04, safe = safeZones(p.ratio, W, H);
+      const guides: { x?: number; y?: number }[] = [];
+      if (d.mode === 'pip') {
+        let nx = b.x + (x - d.sx), ny = b.y + (y - d.sy);
+        const sx: [number, number][] = [[mg, mg], [W - mg - b.w, W - mg], [W / 2 - b.w / 2, W / 2]];
+        for (const [tg, gl] of sx) if (Math.abs(nx - tg) < th) { nx = tg; guides.push({ x: gl }); break; }
+        const sy: [number, number][] = [[safe.top, safe.top], [mg, mg], [H / 2 - b.h / 2, H / 2], [safe.bottomSoft - b.h, safe.bottomSoft], [H - mg - b.h, H - mg]];
+        for (const [tg, gl] of sy) if (Math.abs(ny - tg) < th) { ny = tg; guides.push({ y: gl }); break; }
+        nx = Math.max(0, Math.min(W - b.w, nx)); ny = Math.max(0, Math.min(H - b.h, ny));
+        d.guides = guides;
+        p.onPip?.({ x: nx / W, y: ny / H, w: b.w / W });
+      } else {
+        let nw = b.w + (x - d.sx);
+        nw = Math.max(W * 0.15, Math.min(W - b.x, (H - b.y) / b.ar, nw));
+        if (Math.abs(b.x + nw - (W - mg)) < th) { nw = W - mg - b.x; guides.push({ x: W - mg }); }
+        d.guides = guides;
+        p.onPip?.({ x: b.x / W, y: b.y / H, w: nw / W });
       }
       return;
     }
@@ -462,6 +513,24 @@ function drawVideoGuides(ctx: CanvasRenderingContext2D, W: number, H: number, vi
   ctx.strokeStyle = 'rgba(255,176,102,0.9)'; ctx.lineWidth = W * 0.003; ctx.setLineDash([W * 0.012, W * 0.008]);
   ctx.strokeRect(d.x, d.y, d.w, d.h);
   ctx.setLineDash([]);
+  ctx.strokeStyle = '#3ad1c0'; ctx.lineWidth = W * 0.0025;
+  for (const g of guides) {
+    ctx.beginPath();
+    if (g.x !== undefined) { ctx.moveTo(g.x, 0); ctx.lineTo(g.x, H); }
+    if (g.y !== undefined) { ctx.moveTo(0, g.y); ctx.lineTo(W, g.y); }
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** PIP 작은 화면 테두리 + 크기 손잡이 + 자석 가이드 */
+function drawPipOutline(ctx: CanvasRenderingContext2D, W: number, b: { x: number; y: number; w: number; h: number }, guides: { x?: number; y?: number }[], H: number) {
+  ctx.save();
+  ctx.strokeStyle = 'rgba(255,184,214,0.95)'; ctx.lineWidth = W * 0.003; ctx.setLineDash([W * 0.012, W * 0.008]);
+  ctx.strokeRect(b.x - 3, b.y - 3, b.w + 6, b.h + 6);
+  ctx.setLineDash([]);
+  ctx.fillStyle = '#ffb8d6'; ctx.strokeStyle = '#000'; ctx.lineWidth = W * 0.002;
+  ctx.beginPath(); ctx.arc(b.x + b.w, b.y + b.h, W * 0.016, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
   ctx.strokeStyle = '#3ad1c0'; ctx.lineWidth = W * 0.0025;
   for (const g of guides) {
     ctx.beginPath();

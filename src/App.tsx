@@ -1740,7 +1740,8 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             onCardStyle={(k, patch) => { const f = getFx(projRef.current); setFx({ [k]: { ...f[k], style: { ...(f[k].style || {}), ...patch } } } as Partial<Fx>); }}
             onEditCard={k => { setSelCard(k); setRightTab('fx'); setTimeout(() => { const el = document.getElementById(k + '-title') as HTMLTextAreaElement | null; el?.focus(); el?.select(); }, 60); }}
             selCaption={selCaption} onSelectCaption={setSelCaption} onCaptionText={(id, text) => updateCaption(id, { text })}
-            cropMode={cropMode} viewTrack={viewTrack} viewLabel={viewTrack ? `${viewNum}번 앵글 보는 중` : ''} onXf={(id, xf) => setProject({ frames: withXf(projRef.current, ratio, id, xf) })} />
+            cropMode={cropMode} viewTrack={viewTrack} viewLabel={viewTrack ? `${viewNum}번 앵글 보는 중` : ''} onXf={(id, xf) => setProject({ frames: withXf(projRef.current, ratio, id, xf) })}
+            onPip={pos => { const pp = { ...(projRef.current.pip || {}) }; if (pos) pp[ratio] = pos; else delete pp[ratio]; setProject({ pip: pp }); }} />
           <NeededFiles need={needList} onClose={() => setWant(null)} />
           {remoteEdit && (
             <div className="remote-edit" role="alert">

@@ -258,6 +258,9 @@ export function normCaptionStyle(raw: any, ratio: Ratio): CaptionStyle {
   return st;
 }
 
+/** PIP 작은 화면: 왼쪽 위 모서리(x,y: 화면 크기 대비)와 폭(w: 화면 폭 대비) */
+export interface PipPos { x: number; y: number; w: number }
+
 export interface Project {
   bpm: number;
   beatsPerBar: number;
@@ -288,6 +291,7 @@ export interface Project {
   sheetShift?: number;    // (예전 방식) 쓰지 않음
   trims?: Record<string, Trim>;   // 트랙별 쓰는 부분 (그 파일의 시간, 초) — 'main'·앵글 id·'rec'
   captionStyles: Record<Ratio, CaptionStyle>;
+  pip?: Partial<Record<Ratio, PipPos>>;   // PIP 작은 화면 위치·크기 (화면 비율별, 없으면 기본 자리)
   fx: Fx;
   sheetOffset: number;  // 악보 표기 이동(마디). +1이면 악보 첫 마디가 한 마디 늦게, -1이면 한 마디 일찍 (못갖춘마디용)
 }

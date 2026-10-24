@@ -3,6 +3,7 @@ import { captionStyleOf, styleFor, CAP_SHARED, ownLook, ownPos } from './render'
 import { CaptionStudio } from './CaptionStudio';
 import { Angle, ANGLE_COLORS, makeAngleVideo, followMaster, activeSource } from './angles';
 import { fixEditList } from './movfix';
+import { decodeVideoAudio } from './audiofile';
 import { Track, decodeMono, analyzeTrack, estimateTempo, syncOffset, firstStrongBeat, downbeatShift, refinePhase, kickGrid } from './analysis';
 import { SheetData, fileToPages, detectSheet, leadingRests, stitchImages } from './sheet';
 import { Player } from './player';
@@ -330,7 +331,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     cloudUpload('video', file);
     setMsg({ kind: 'busy', text: '영상 소리 분석 중…' });
     try {
-      const mono = await decodeMono(await file.arrayBuffer());
+      const mono = await decodeVideoAudio(file, ab => decodeMono(ab));
       const tr = analyzeTrack(mono);
       setMsg({ kind: 'ok', text: '영상 소리 분석 완료' });
       setVTrack(tr);
@@ -569,7 +570,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     setSources(ss => ss.map(x => x.id === id ? { ...x, dur } : x));
     setMsg({ kind: 'busy', text: `${file.name} 소리 분석 중…` });
     let tr: Track | null = null;
-    try { tr = analyzeTrack(await decodeMono(await file.arrayBuffer())); setSources(ss => ss.map(x => x.id === id ? { ...x, track: tr } : x)); } catch { /* 소리 없는 영상 */ }
+    try { tr = analyzeTrack(await decodeVideoAudio(file, ab => decodeMono(ab))); setSources(ss => ss.map(x => x.id === id ? { ...x, track: tr } : x)); } catch { /* 소리 없는 영상 */ }
     if (restoring) { setMsg({ kind: 'ok', text: `${file.name}을 불러왔어요.` }); return; }
     // 첫 영상을 같이 넣었으면 그 길이를 알 때까지 기다림 (첫 영상 조각이 빠지지 않게)
     for (let i = 0; i < 100 && videoRef.current?.src && !(masterDur() > 0); i++) await new Promise(r => setTimeout(r, 100));
@@ -628,7 +629,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     cloudUpload('angle:' + id, file);
     setMsg({ kind: 'busy', text: `${file.name} 소리 분석 중… (기준 영상과 싱크 맞추기)` });
     try {
-      const tr = analyzeTrack(await decodeMono(await file.arrayBuffer()));
+      const tr = analyzeTrack(await decodeVideoAudio(file, ab => decodeMono(ab)));
       updateAngle(id, { track: tr });
       setMsg({ kind: 'ok', text: `${file.name} 앵글을 추가했어요.` });
     } catch {
@@ -1123,7 +1124,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     const f = masterFile.current;
     if (f && !projRef.current.videoMuted) {
       if (masterAudio.current?.file !== f) {
-        try { masterAudio.current = { file: f, buf: await new OfflineAudioContext(2, 1, 48000).decodeAudioData(await f.arrayBuffer()) }; }
+        try { masterAudio.current = { file: f, buf: await decodeVideoAudio(f, ab => new OfflineAudioContext(2, 1, 48000).decodeAudioData(ab)) }; }
         catch { masterAudio.current = null; }
       }
       mAudio = masterAudio.current?.buf || null;
@@ -1132,7 +1133,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     if (!projRef.current.videoMuted) for (const x of sourcesRef.current) {
       if (!sourceAudio.current.has(x.file)) {
         let b: AudioBuffer | null = null;
-        try { b = await new OfflineAudioContext(2, 1, 48000).decodeAudioData(await x.file.arrayBuffer()); } catch { /* 소리 없음 */ }
+        try { b = await decodeVideoAudio(x.file, ab => new OfflineAudioContext(2, 1, 48000).decodeAudioData(ab)); } catch { /* 소리 없음 */ }
         sourceAudio.current.set(x.file, b);
       }
       sAudio.set(x.id, sourceAudio.current.get(x.file) || null);

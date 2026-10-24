@@ -70,6 +70,16 @@ export interface Cloud {
 /** Firestore는 undefined 값을 받지 않으므로 JSON으로 한 번 걸러서 저장 */
 const clean = <T>(o: T): T => JSON.parse(JSON.stringify(o));
 
+// ---------- 이번 달 내려받은 양 (요금 추정용, 이 컴퓨터 기준) ----------
+const dlKey = (d = new Date()) => `pve.dl.${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`;
+/** 이 컴퓨터(브라우저)에서 이번 달 클라우드에서 내려받은 바이트 */
+export function monthDownloaded(): number {
+  try { return Number(localStorage.getItem(dlKey())) || 0; } catch { return 0; }
+}
+function addDownloaded(n: number) {
+  try { localStorage.setItem(dlKey(), String(monthDownloaded() + n)); } catch { /* 저장 못 해도 그만 */ }
+}
+
 /** 같은 파일을 두 번 올리지 않도록 만드는 지문: 크기 + 앞뒤 4MB의 SHA-256 */
 async function fileKey(f: File): Promise<string> {
   const CH = 4 << 20;
@@ -174,6 +184,7 @@ export function initCloud(): Cloud | null {
         parts.push(value); got += value.length;
         if (total) onProgress(Math.min(1, got / total));
       }
+      addDownloaded(got);
       return new File(parts, r.name, { type: r.type || resp.headers.get('content-type') || '' });
     },
     async deleteFile(path) {

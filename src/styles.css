@@ -463,3 +463,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .src-item { display: flex; align-items: center; gap: 8px; padding: 6px 8px; border: 1px solid var(--line, #3a342c); border-radius: 8px; font-size: 12px; }
 .src-item .src-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .src-item .src-num { font-variant-numeric: tabular-nums; opacity: .7; }
+.usage-row.sub { color: var(--muted); font-size: 12px; align-items: center; gap: 8px; }
+.usage-row select { max-width: 60%; font-size: 12px; }
+.cost-total { font-size: 15px; }
+.usage .note.small { margin: 2px 0 0; font-size: 11px; color: var(--dim); }

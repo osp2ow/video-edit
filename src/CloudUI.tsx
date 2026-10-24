@@ -1,5 +1,5 @@
 // 로그인 화면 · 프로젝트 목록 · 선생님 관리
-import { Cloud, CloudStatus, CloudUser, ProjectDoc, MemberDoc, refsOf } from './cloud';
+import { Cloud, CloudStatus, CloudUser, ProjectDoc, MemberDoc, refsOf, monthDownloaded } from './cloud';
 
 const { useState, useEffect } = React;
 
@@ -57,6 +57,26 @@ interface PanelProps {
 }
 
 const FREE = 5 * 1024 ** 3;
+// ---------- 예상 요금 (Firebase Storage, *.firebasestorage.app 버킷 = Google Cloud Storage 요금) ----------
+// 2026-10 기준 공개 요금표. 무료 한도는 미국 지역(us-central1·us-east1·us-west1) 버킷에만 있음.
+//   보관: 미국 $0.020, 그 외(서울·도쿄 등) 약 $0.023 / GB·월 — 미국은 5GB까지 무료
+//   내려받기(인터넷으로 나가는 양): $0.12 / GB — 미국은 한 달 100GB까지 무료
+//   올리기는 무료, 요청 횟수 요금은 이 앱 사용량에선 몇 원 수준이라 뺌
+export type Region = 'us' | 'asia';
+const GB = 1024 ** 3, KRW = 1450;
+const PRICE = {
+  us:   { store: 0.020, freeStore: 5, egress: 0.12, freeEgress: 100 },
+  asia: { store: 0.023, freeStore: 0, egress: 0.12, freeEgress: 0 },
+};
+export function estimateCost(region: Region, storedBytes: number, downloadedBytes: number) {
+  const p = PRICE[region];
+  const store = Math.max(0, storedBytes / GB - p.freeStore) * p.store * KRW;
+  const egress = Math.max(0, downloadedBytes / GB - p.freeEgress) * p.egress * KRW;
+  return { store, egress, total: store + egress };
+}
+const fmtWon = (w: number) => w < 1 ? '0원' : w < 10 ? '10원 미만' : `${Math.round(w).toLocaleString('ko-KR')}원`;
+const REGION_KEY = 'pve.storageRegion';
+const loadRegion = (): Region => { try { return localStorage.getItem(REGION_KEY) === 'asia' ? 'asia' : 'us'; } catch { return 'us'; } };
 const fmtSize = (b: number) => b <= 0 ? "0MB" : b >= 1024 ** 3 ? `${(b / 1024 ** 3).toFixed(2)}GB` : b >= 1024 ** 2 ? `${(b / 1024 ** 2).toFixed(0)}MB` : `${Math.max(1, Math.round(b / 1024))}KB`;
 
 const fmtDate = (ms: number) => {
@@ -101,10 +121,7 @@ export function ProjectsPanel(p: PanelProps) {
           {tab === 'members' ? <Members cloud={p.cloud} /> : (
             <>
               {p.cloud.storage && (
-                <div className="usage">
-                  <div className="usage-row"><span>클라우드 사용량</span><span className="mono">{fmtSize(used)} / 5GB 무료</span></div>
-                  <div className={`bar ${used > FREE ? 'over' : used > FREE * 0.8 ? 'near' : ''}`}><i style={{ width: `${Math.min(100, used / FREE * 100)}%` }} /></div>
-                </div>
+                <CostBox used={used} />
               )}
               <input id="pj-search" type="text" placeholder="제목·파일 이름·선생님으로 찾기" value={q} onChange={e => setQ(e.target.value)} />
               {list.length === 0 ? (
@@ -148,6 +165,35 @@ export function ProjectsPanel(p: PanelProps) {
           )}
         </div>
       </div>
+    </div>
+  );
+}
+
+/** 클라우드 예상 요금 (이번 달) */
+function CostBox({ used }: { used: number }) {
+  const [region, setRegion] = useState<Region>(loadRegion);
+  const dl = monthDownloaded();
+  const c = estimateCost(region, used, dl);
+  const pick = (r: Region) => { setRegion(r); try { localStorage.setItem(REGION_KEY, r); } catch { /* 무시 */ } };
+  const free = region === 'us';
+  return (
+    <div className="usage">
+      <div className="usage-row"><span>이번 달 예상 요금</span><b className="mono cost-total">{fmtWon(c.total)}</b></div>
+      <div className="usage-row sub">
+        <span>보관 {fmtSize(used)}{free ? ' (5GB까지 무료)' : ''}</span><span className="mono">{fmtWon(c.store)}</span>
+      </div>
+      {free && <div className={`bar ${used > FREE ? 'over' : used > FREE * 0.8 ? 'near' : ''}`}><i style={{ width: `${Math.min(100, used / FREE * 100)}%` }} /></div>}
+      <div className="usage-row sub">
+        <span>내려받기 {fmtSize(dl)} · 이 컴퓨터, 이번 달{free ? ' (100GB까지 무료)' : ''}</span><span className="mono">{fmtWon(c.egress)}</span>
+      </div>
+      <div className="usage-row sub">
+        <span>Storage 위치</span>
+        <select id="cost-region" value={region} onChange={e => pick(e.target.value as Region)}>
+          <option value="us">미국 (us-central1 등, 무료 한도 있음)</option>
+          <option value="asia">서울·도쿄 등 그 외 (무료 한도 없음)</option>
+        </select>
+      </div>
+      <p className="note small">대략적인 금액이에요 (1달러≈{KRW.toLocaleString('ko-KR')}원). 올리기는 무료이고, 다른 컴퓨터에서 내려받은 양은 빠져 있어요. 위치는 Firebase 콘솔 → Storage에서 버킷 이름 옆에 나와요.</p>
     </div>
   );
 }

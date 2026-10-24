@@ -1,0 +1,30 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell', args: ['--autoplay-policy=no-user-gesture-required'] });
+const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, acceptDownloads: true });
+const page = await ctx.newPage();
+const logs = []; page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message));
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' }); if (u.includes('fonts.g')) return r.abort(); return r.continue(); });
+await page.goto('file:///home/claude/pve/dist/index.html');
+await page.setInputFiles('#f-sheet', '/home/claude/poc/in/sheet.pdf');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('자동 감지'), null, { timeout: 60000 });
+await page.waitForTimeout(800);
+const P = () => page.evaluate(() => JSON.parse(localStorage.getItem('pve.proj:test.webm')));
+const tl = await page.locator('.tl-canvas canvas').boundingBox();
+const d = await page.evaluate(() => document.querySelector('video').duration);
+const pps = (tl.width - 2) / (d * 1.02);
+const X = t => tl.x + (t + d * 0.01) * pps;
+const tl2 = await page.locator('.tl-canvas canvas').boundingBox();
+await page.click('.thumb-btn'); await page.waitForTimeout(400);
+for (const r of ['피드', '유튜브']) { const b = page.locator(`.thumb-side .seg button:has-text("${r}")`); if (!(await b.getAttribute('aria-pressed') === 'true')) await b.click(); }
+await page.fill('#th-title-in', '가스펠 · 펑크에서 바로 쓰는 필인 네 가지 총정리'); await page.waitForTimeout(400);
+await page.fill('#th-sub', '주니퍼 실용음악학원 @juniper_music').catch(() => {});
+await page.waitForTimeout(800);
+await page.locator('.thumb-view').screenshot({ path: 'test/thsafe.png' });
+const dls = []; page.on('download', d => dls.push(d));
+await page.click('text=/PNG \\d장 저장|PNG 저장/'); await page.waitForTimeout(8000);
+for (const d of dls) { await d.saveAs('test/th_' + d.suggestedFilename()); console.log('saved', d.suggestedFilename()); }
+console.log(logs.join('\n')); await browser.close();

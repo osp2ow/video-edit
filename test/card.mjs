@@ -1,0 +1,28 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell', args: ['--autoplay-policy=no-user-gesture-required'] });
+const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, acceptDownloads: true });
+const page = await ctx.newPage();
+const logs = []; page.on('console', m => logs.push(m.type() + ': ' + m.text())); page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message));
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' }); if (u.includes('fonts.g')) return r.abort(); return r.continue(); });
+await page.goto('file:///home/claude/pve/dist/index.html');
+await page.setInputFiles('#f-sheet', '/home/claude/poc/in/sheet.pdf');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+const tl = await page.locator('.tl-canvas canvas').boundingBox();
+const d = await page.evaluate(() => document.querySelector('video').duration);
+const X = t => tl.x + (t + d * 0.01) * (tl.width - 2) / (d * 1.02);
+const kY = tl.y + 28 + 6 + 24 + 6 + 26 + 6 + 11;
+await page.mouse.move(X(0) + 1, kY); await page.mouse.down(); await page.mouse.move(X(6), kY, { steps: 6 }); await page.mouse.up();
+await page.mouse.move(X(d) - 1, kY); await page.mouse.down(); await page.mouse.move(X(30), kY, { steps: 6 }); await page.mouse.up();
+await page.mouse.dblclick(X(38), kY);
+await page.waitForTimeout(300);
+console.log('segs', JSON.stringify(JSON.parse(await page.evaluate(() => localStorage.getItem('pve.proj:test.webm'))).cardSegs.map(s => [s.start.toFixed(2), s.end.toFixed(2)])));
+const at = async t => { await page.evaluate(t => { document.querySelector('video').currentTime = t; }, t); await page.waitForTimeout(500); };
+await at(2); await page.screenshot({ path: 'test/card_off.png', clip: { x: 300, y: 50, width: 1320, height: 1000 } });
+await at(12); await page.screenshot({ path: 'test/card_on.png', clip: { x: 300, y: 50, width: 1320, height: 1000 } });
+// 구간 선택 후 Delete
+await page.mouse.click(X(40), kY); await page.keyboard.press('Delete'); await page.waitForTimeout(200);
+console.log('after delete', JSON.stringify(JSON.parse(await page.evaluate(() => localStorage.getItem('pve.proj:test.webm'))).cardSegs.map(s => [s.start.toFixed(2), s.end.toFixed(2)])));
+console.log(logs.filter(l => l.startsWith('PAGEERROR')).join('\n')); await browser.close();

@@ -1,0 +1,48 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell' });
+const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+const logs = []; page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message));
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' }); if (u.includes('fonts.g')) return r.abort(); return r.continue(); });
+await page.goto('file:///home/claude/pve/dist/index.html');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('자동 감지'), null, { timeout: 60000 });
+await page.setInputFiles('#f-angle', 'test/angle2.webm');
+const at = async t => { await page.evaluate(t => { document.querySelector('video').currentTime = t; }, t); await page.waitForTimeout(250); };
+console.log('ver label:', await page.locator('.ver').count());
+// 1. 인트로/엔딩
+await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '효과')?.click());
+await page.check('#intro-on'); await page.fill('#intro-title', 'Nord Live');
+await page.check('#outro-on'); await page.fill('#outro-title', '주니퍼');
+await page.evaluate(() => document.activeElement.blur());
+const tl = await page.locator('.tl-canvas canvas').boundingBox();
+const d = await page.evaluate(() => document.querySelector('video').duration);
+const X = t => tl.x + (t + d * 0.01) * (tl.width - 2) / (d * 1.02);
+const cY = tl.y + 28 + 6 + 24 + 6 + 13;
+await page.mouse.move(X(1.2), cY); await page.mouse.down(); await page.mouse.move(X(5.2), cY, { steps: 6 }); await page.mouse.up();
+await page.mouse.move(X(d) - 2, cY); await page.mouse.down(); await page.mouse.move(X(d - 1.5), cY, { steps: 4 }); await page.mouse.up();
+let fx = JSON.parse(await page.evaluate(() => localStorage.getItem('pve.proj:test.webm'))).fx;
+console.log('intro', JSON.stringify(fx.intro), 'outro', JSON.stringify(fx.outro));
+await at(fx.intro.at + 1);
+await page.screenshot({ path: 'test/f1.png' });
+// 2. 미리보기 더블클릭 수정
+await at(12); await page.evaluate(() => document.activeElement.blur()); await page.keyboard.press('c');
+await page.keyboard.insertText('원래 자막'); await page.evaluate(() => document.activeElement.blur()); await page.waitForTimeout(300);
+await at(12.6); const st = await page.locator('canvas.stage').boundingBox();
+await page.mouse.dblclick(st.x + st.width * 0.5, st.y + st.height * 0.6); await page.waitForTimeout(300);
+console.log('inline editor', await page.locator('.cap-inline').count());
+await page.keyboard.insertText('바뀐 자막'); await page.waitForTimeout(200);
+await page.screenshot({ path: 'test/f2.png' });
+await page.keyboard.press('Enter'); await page.waitForTimeout(300);
+console.log('caption text:', JSON.parse(await page.evaluate(() => localStorage.getItem('pve.proj:test.webm'))).captions.map(c => c.text));
+// 3. 구간 지정
+await page.click('.export-btn'); await page.click('.modal >> text=구간 지정'); await page.waitForTimeout(300);
+console.log('dialog closed', await page.locator('.modal').count(), 'pickbar', await page.locator('.pickbar').count());
+await page.mouse.move(X(10), tl.y + 150); await page.mouse.down(); await page.mouse.move(X(20), tl.y + 150, { steps: 8 }); await page.mouse.up();
+await page.screenshot({ path: 'test/f3.png' });
+console.log('pickbar:', await page.locator('.pickbar').textContent());
+await page.click('text=이 구간 추출하기'); await page.waitForTimeout(300);
+console.log('dialog:', await page.evaluate(() => [...document.querySelectorAll('.modal button.on')].map(b => b.textContent).join('|') + ' / ' + document.querySelector('.modal .note.mono')?.textContent));
+console.log(logs.join('\n')); await browser.close();

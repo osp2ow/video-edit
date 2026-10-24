@@ -1,0 +1,21 @@
+import { chromium } from 'playwright-core';
+import fs from 'fs';
+const NM = '/home/claude/pve/node_modules';
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell' });
+const page = await browser.newPage();
+await page.goto('about:blank');
+await page.addScriptTag({ path: NM + '/pdfjs-dist/build/pdf.min.js' });
+await page.addScriptTag({ path: NM + '/pdfjs-dist/build/pdf.worker.min.js' });
+const b64 = fs.readFileSync('/home/claude/poc/in/sheet.pdf').toString('base64');
+const url = await page.evaluate(async (b64) => {
+  const data = Uint8Array.from(atob(b64), c => c.charCodeAt(0));
+  const doc = await pdfjsLib.getDocument({ data }).promise;
+  const pg = await doc.getPage(1);
+  const vp0 = pg.getViewport({ scale: 1 }); const vp = pg.getViewport({ scale: 1650 / vp0.width });
+  const c = document.createElement('canvas'); c.width = Math.round(vp.width); c.height = Math.round(vp.height);
+  const ctx = c.getContext('2d'); ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
+  await pg.render({ canvasContext: ctx, viewport: vp }).promise;
+  return c.toDataURL('image/png');
+}, b64);
+fs.writeFileSync('test/pdfjs_page.png', Buffer.from(url.split(',')[1], 'base64'));
+await browser.close();

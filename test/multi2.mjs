@@ -1,0 +1,31 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell', args: ['--autoplay-policy=no-user-gesture-required'] });
+const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, acceptDownloads: true }); const page = await ctx.newPage();
+const logs = []; page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message));
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' }); if (u.includes('fonts.g')) return r.abort(); return r.continue(); });
+await page.goto('file:///home/claude/pve/dist/index.html');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('자동 감지'), null, { timeout: 60000 });
+await page.setInputFiles('#f-angle', 'test/angle2.webm');
+// 썸네일 2장
+await page.click('.thumb-btn'); await page.waitForTimeout(400);
+await page.click('.thumb-side .seg button:has-text("피드")'); await page.fill('#th-title-in', '가호 - 시작'); await page.waitForTimeout(600);
+await page.screenshot({ path: 'test/multi_thumb.png' });
+const dls = []; page.on('download', d => dls.push(d.suggestedFilename()));
+await page.click('text=PNG 2장 저장'); await page.waitForTimeout(2000);
+console.log('thumb downloads', dls.join(', '));
+await page.click('.modal-head >> text=닫기');
+// 영상 2개 (720p, 짧은 구간)
+dls.length = 0;
+await page.click('.export-btn'); await page.click('text=720p');
+await page.click('.modal .seg button:has-text("피드")');
+console.log('summary:', await page.evaluate(() => document.querySelector('.modal .summary').innerText.replace(/\n/g, ' | ')));
+await page.click('text=추출 시작');
+await page.waitForFunction(() => document.querySelector('.ex-results') && document.querySelector('.ok-text'), null, { timeout: 280000 });
+await page.waitForTimeout(1000);
+console.log('video downloads', dls.join(', '));
+console.log('modal:', await page.evaluate(() => document.querySelector('.modal').innerText.replace(/\n/g, ' | ')));
+console.log(logs.join('\n')); await browser.close();

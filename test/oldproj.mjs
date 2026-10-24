@@ -1,0 +1,17 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell', args: ['--autoplay-policy=no-user-gesture-required'] });
+const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+const page = await ctx.newPage();
+const logs = []; page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message));
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' }); if (u.includes('fonts.g')) return r.abort(); return r.continue(); });
+await page.goto('file:///home/claude/pve/dist/index.html');
+await page.evaluate(() => { localStorage.setItem('pve.proj:test.webm', JSON.stringify({ bpm: 91, beatsPerBar: 4, anchorTime: 1.234, anchorBar: 1, recOffset: 0.8, clips: [{ id: 'v0', start: 2, srcIn: 0, srcOut: 40 }], cuts: [], angleOffsets: {}, captions: [] })); });
+await page.reload();
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+await page.waitForTimeout(8000);
+const p = await page.evaluate(() => window.__pveTransport.getProject());
+console.log('recAt', p.recAt, '(expect 2-0.8=1.2)', 'recOffset', p.recOffset, 'anchor', p.anchorTime, 'bpm', p.bpm, 'clips', JSON.stringify(p.clips));
+console.log(logs.join('\n')); await browser.close();

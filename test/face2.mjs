@@ -1,0 +1,44 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules', FDP = '/tmp/claude-0/-home-claude/43674002-dd81-512c-aaaa-34dc46a47316/scratchpad/mp/fd/package/';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell', args: ['--use-gl=swiftshader', '--enable-unsafe-swiftshader'] });
+const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, acceptDownloads: true });
+const page = await ctx.newPage();
+const logs = []; page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message)); page.on('console', m => { if (m.type() === 'error' || m.type() === 'warning') logs.push(m.text().slice(0, 200)); });
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' });
+  if (u.includes('@mediapipe/face_detection')) return r.fulfill({ path: FDP + u.split('/').pop().split('?')[0] });
+  if (u.startsWith('http://app.test/')) return r.fulfill({ path: '/home/claude/pve/dist/' + u.slice(16) });
+  if (u.includes('fonts.g')) return r.abort(); return r.continue(); });
+await page.goto('http://app.test/index.html');
+await page.setInputFiles('#f-sheet', '/home/claude/poc/in/sheet.pdf');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('자동 감지'), null, { timeout: 60000 });
+await page.setInputFiles('#f-angle', 'test/angle2.webm');
+await page.waitForFunction(() => document.querySelectorAll('.angle .chip').length > 0, null, { timeout: 60000 });
+const at = async t => { await page.evaluate(t => { document.querySelector('video').currentTime = t; }, t); await page.waitForTimeout(400); };
+const region = (x, y, w, h) => page.evaluate(([x, y, w, h]) => { const c = document.querySelector('canvas.stage'); const d = c.getContext('2d').getImageData(x, y, w, h).data; let s = [0,0,0], v = 0; const n = d.length / 4; for (let i = 0; i < d.length; i += 4) { s[0] += d[i]; s[1] += d[i+1]; s[2] += d[i+2]; } const m = s.map(a => a / n); for (let i = 0; i < d.length; i += 4) v += (d[i] - m[0]) ** 2; return { m: m.map(Math.round), sd: Math.round(Math.sqrt(v / n)) }; }, [x, y, w, h]);
+// 1) 진행 커서
+await at(20);
+await page.check('#sheet-cursor'); await page.waitForTimeout(300);
+await page.screenshot({ path: 'test/n_cursor.png', clip: { x: 930, y: 60, width: 400, height: 300 } });
+// 2) 얼굴 보정
+await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '효과')?.click());
+await at(10);
+const c = await page.evaluate(() => { const c = document.querySelector('canvas.stage'); return [c.width, c.height]; });
+const fx0 = Math.round(0.7736 * c[0]), fy0 = Math.round(0.363 * c[1]);
+const before = await region(fx0 - 40, fy0 - 40, 80, 80);
+await page.check('#face-on');
+await page.waitForFunction(() => /얼굴 \d명/.test(document.body.textContent), null, { timeout: 60000 }).catch(() => console.log('face wait timeout'));
+console.log('face status:', await page.evaluate(() => [...document.querySelectorAll('h2')].find(h => h.textContent.startsWith('얼굴 보정'))?.textContent));
+await page.evaluate(() => { const i = document.querySelector('#face-smooth'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set; set.call(i, '1'); i.dispatchEvent(new Event('input', { bubbles: true })); const j = document.querySelector('#face-bright'); set.call(j, '1'); j.dispatchEvent(new Event('input', { bubbles: true })); });
+await page.waitForTimeout(1500);
+const after = await region(fx0 - 40, fy0 - 40, 80, 80);
+const lowY = Math.round(0.392 * c[1]); console.log('lower face on', JSON.stringify(await region(fx0 - 30, lowY, 60, 25)));
+await page.uncheck('#face-on'); await page.waitForTimeout(500); console.log('lower face off', JSON.stringify(await region(fx0 - 30, lowY, 60, 25))); await page.check('#face-on'); await page.waitForTimeout(800);
+console.log('face region before', JSON.stringify(before), 'after', JSON.stringify(after));
+await page.screenshot({ path: 'test/n_face.png', clip: { x: 930, y: 60, width: 400, height: 700 } });
+const grabFace = async (name) => { const url = await page.evaluate(([x, y]) => { const c = document.querySelector('canvas.stage'); const o = document.createElement('canvas'); o.width = 420; o.height = 440; o.getContext('2d').drawImage(c, x - 210, y - 220, 420, 440, 0, 0, 420, 440); return o.toDataURL(); }, [fx0, fy0]); (await import('fs')).writeFileSync('test/' + name, Buffer.from(url.split(',')[1], 'base64')); };
+{ const sb = await page.locator('canvas.stage').boundingBox(); await page.mouse.move(sb.x + sb.width * 0.3, sb.y + sb.height * 0.22); await page.mouse.down(); await page.mouse.move(sb.x + sb.width * 0.3, sb.y + sb.height * 0.62, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(800); }
+await grabFace('face_on.png'); await page.uncheck('#face-on'); await page.waitForTimeout(500); await grabFace('face_off.png'); await page.check('#face-on'); await page.waitForTimeout(800);
+console.log(logs.filter(l => !/GL Driver|fonts|ERR_FAILED|gl_context|Canvas2D/.test(l)).slice(0, 10).join('\n')); await browser.close();

@@ -1,0 +1,46 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell', args: ['--autoplay-policy=no-user-gesture-required'] });
+const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, acceptDownloads: true });
+const page = await ctx.newPage();
+const logs = []; page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message)); page.on('console', m => { if (m.type() === 'error') logs.push(m.text()); });
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' }); if (u.includes('fonts.g')) return r.abort(); return r.continue(); });
+await page.goto('file:///home/claude/pve/dist/index.html');
+await page.setInputFiles('#f-sheet', '/home/claude/poc/in/sheet.pdf');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('자동 감지'), null, { timeout: 60000 });
+await page.setInputFiles('#f-angle', 'test/angle2.webm');
+await page.waitForFunction(() => document.querySelectorAll('.angle .chip').length > 0, null, { timeout: 60000 });
+const seek = async t => { await page.evaluate(t => { document.querySelector('video').currentTime = t; }, t); await page.waitForTimeout(350); };
+// 앵글: 16.7(10마디)에 2번, 19.3(11마디)에 2분할, 22(12마디)에 1번
+await seek(16.71); await page.keyboard.press('2');
+await seek(19.35); await page.click('.chips >> text=2분할');
+await seek(21.98); await page.keyboard.press('1');
+// 효과 탭
+await page.click('.tabs >> text=효과');
+await page.click('.chips >> text=디졸브');
+await page.fill('#fade-in', '1').catch(() => {});
+await page.evaluate(() => { const set = (id, v) => { const el = document.getElementById(id); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set.call(el, v); el.dispatchEvent(new Event('input', { bubbles: true })); }; set('fade-in', '1'); set('fade-out', '1'); set('f-vig', '0.5'); });
+await page.click('#intro-on'); await page.fill('#intro-title', 'Nord Live'); await page.fill('#intro-sub', 'Drum Cover · 오세혁');
+await page.setInputFiles('#logo-file', 'test/logo.png'); await page.waitForTimeout(400);
+await page.click('#outro-on'); await page.fill('#outro-title', '주니퍼 실용음악학원'); await page.fill('#outro-sub', '@juniper_music');
+await page.click('.chips >> text=따뜻하게');
+await page.click('.chips >> text=마디 첫 박');
+await page.click('#flash');
+await page.evaluate(() => document.activeElement.blur());
+await seek(16.71); await page.waitForTimeout(300);
+const st = await page.locator('canvas.stage').boundingBox();
+await page.screenshot({ path: 'test/fx_preview_tr.png', clip: { x: st.x, y: st.y, width: st.width, height: st.height } });
+await page.screenshot({ path: 'test/fx_panel.png' });
+// 추출: 9~12마디 (14.07~24.62)
+await page.click('.export-btn'); await page.click('text=720p'); await page.click('text=마디 지정');
+await page.fill('#ex-from', '9'); await page.fill('#ex-to', '12');
+await page.click('text=추출 시작');
+await page.waitForSelector('.ok-text', { timeout: 120000 });
+await page.evaluate(() => { delete window.showSaveFilePicker; });
+const [dl] = await Promise.all([page.waitForEvent('download'), page.click('text=MP4 저장')]);
+await dl.saveAs('test/fx_out.mp4');
+console.log('exported');
+console.log(logs.join('\n')); await browser.close();

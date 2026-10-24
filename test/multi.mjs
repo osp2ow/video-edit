@@ -1,0 +1,35 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell', args: ['--autoplay-policy=no-user-gesture-required'] });
+const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+const logs = []; page.on('console', m => logs.push(m.type() + ': ' + m.text())); page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message));
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' }); if (u.includes('fonts.g')) return r.abort(); return r.continue(); });
+await page.goto('file:///home/claude/pve/dist/index.html');
+await page.waitForTimeout(500);
+await page.setInputFiles('#f-sheet', '/home/claude/poc/in/sheet.pdf');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('자동 감지'), null, { timeout: 60000 });
+await page.setInputFiles('#f-angle', 'test/angle2.webm');
+await page.waitForFunction(() => document.querySelectorAll('.angle .chip').length > 0, null, { timeout: 60000 });
+await page.waitForTimeout(500);
+const off = await page.evaluate(() => [...document.querySelectorAll('.angle')].map(e => e.textContent));
+console.log('angles', JSON.stringify(off));
+const seekTo = async t => { await page.evaluate(t => { document.querySelector('video').currentTime = t; }, t); await page.waitForTimeout(700); };
+await seekTo(10.2); await page.keyboard.press('2');
+await seekTo(20.1); await page.keyboard.press('1');
+await seekTo(12); await page.screenshot({ path: 'test/m1_angle2.png' });
+const st = await page.evaluate(() => ({ status: document.querySelector('.status').textContent, proj: JSON.parse(localStorage.getItem('pve.proj:test.webm')) }));
+console.log('cuts', JSON.stringify(st.proj.cuts), 'offsets', JSON.stringify(st.proj.angleOffsets));
+// 재생 중 전환 확인: 19초부터 재생해 21.5초에서 캡처 (1번으로 돌아왔는지)
+await seekTo(9.0);
+await page.click('.btn.play'); await page.waitForTimeout(2200);
+const t1 = await page.evaluate(() => document.querySelector('video').currentTime);
+await page.screenshot({ path: 'test/m2_play.png' });
+// 앵글2 영상 시간 vs 기준 영상 시간 + offset 차이
+const drift = await page.evaluate(() => { const vs = [...document.querySelectorAll('video')]; return { master: vs[0].currentTime, angle: vs[1]?.currentTime }; });
+console.log('t', t1, 'drift check', JSON.stringify(drift));
+await page.click('.btn.play');
+console.log(logs.filter(l => !l.includes('fonts') && !l.includes('fake worker') && !l.includes('ERR_FAILED')).join('\n'));
+await browser.close();

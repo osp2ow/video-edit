@@ -1,0 +1,28 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell', args: ['--autoplay-policy=no-user-gesture-required', ...(process.env.NOGL ? ['--disable-webgl', '--disable-webgl2'] : [])] });
+const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 }, acceptDownloads: true });
+const page = await ctx.newPage(); const dialogs = []; page.on('dialog', d => { dialogs.push(d.message()); d.dismiss(); });
+const logs = []; page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message));
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' }); if (u.includes('fonts.g')) return r.abort(); return r.continue(); });
+await page.goto('file:///home/claude/pve/dist/index.html');
+await page.setInputFiles('#f-sheet', '/home/claude/poc/in/sheet.pdf');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('자동 감지'), null, { timeout: 60000 });
+await page.waitForTimeout(800);
+const P = () => page.evaluate(() => JSON.parse(localStorage.getItem('pve.proj:test.webm')));
+const tl = await page.locator('.tl-canvas canvas').boundingBox();
+const d = await page.evaluate(() => document.querySelector('video').duration);
+const pps = (tl.width - 2) / (d * 1.02);
+const X = t => tl.x + (t + d * 0.01) * pps;
+const tl2 = await page.locator('.tl-canvas canvas').boundingBox();
+await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '효과')?.click());
+await page.check('#face-on'); await page.waitForTimeout(2500);
+// MediaPipe가 띄우던 경고창 흉내
+await page.evaluate(() => window.alert('Failed to create WebGL canvas context when passing video frame.'));
+await page.waitForTimeout(500);
+console.log('dialogs', JSON.stringify(dialogs));
+console.log('status text:', await page.evaluate(() => [...document.querySelectorAll('h2')].find(h => h.textContent.includes('얼굴 보정'))?.textContent));
+console.log(logs.join('\n')); await browser.close();

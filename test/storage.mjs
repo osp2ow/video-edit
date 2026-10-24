@@ -1,0 +1,55 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js', 'firebase-app-compat.js': '/home/claude/pve/test/fake-firebase.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell' });
+const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+const logs = [];
+await ctx.route('**/*', r => {
+  const u = r.request().url();
+  const f = Object.keys(map).find(k => u.endsWith('/' + k));
+  if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' });
+  if (/firebase-(auth|firestore|storage)-compat/.test(u)) return r.fulfill({ body: '', contentType: 'application/javascript' });
+  if (u.endsWith('/config.js')) return r.fulfill({ body: 'window.FIREBASE_CONFIG={apiKey:"test",projectId:"t",storageBucket:"b"};window.APP_ADMINS=["*"];', contentType: 'application/javascript' });
+  if (u.includes('fonts.g')) return r.abort();
+  return r.continue();
+});
+const page = await ctx.newPage();
+page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message));
+await page.goto('http://localhost:8765/deploy/video-editor/index.html');
+await page.evaluate(() => localStorage.clear()); await page.reload();
+await page.evaluate(() => { window.__FAKE_LOGIN = { uid: 'u1', email: 'osp2ow@gmail.com', displayName: '오세혁', emailVerified: true }; });
+await page.click('.btn.google'); await page.waitForSelector('.cloudbar');
+// 집에서 작업
+await page.setInputFiles('#f-sheet', '/home/claude/poc/in/sheet.pdf');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('자동 감지'), null, { timeout: 60000 });
+await page.setInputFiles('#f-angle', 'test/angle2.webm');
+await page.waitForFunction(() => document.querySelectorAll('.angle .chip').length > 0, null, { timeout: 60000 });
+await page.click('text=+1마디');
+await page.waitForFunction(() => { const p = Object.values(window.__fakeDump().projects || {})[0]; return p && p.files && p.files.video && p.files.rec && p.files.sheet && p.files.angles && Object.keys(p.files.angles).length === 1; }, null, { timeout: 30000 });
+await page.waitForTimeout(2000);
+let st = await page.evaluate(() => ({ blobs: [...window.__fakeBlobs.keys()], files: Object.values(window.__fakeDump().projects)[0].files, save: document.querySelector('.save').textContent }));
+console.log('1 uploaded objects:', st.blobs.length, '| roles:', Object.keys(st.files).join(','), '| header:', st.save);
+// 학원 PC: 로그아웃 → 다시 로그인 (화면 상태 초기화)
+await page.click('.userchip >> text=로그아웃'); await page.waitForSelector('.login-card');
+await page.click('.btn.google'); await page.waitForSelector('.cloudbar');
+console.log('2 fresh: video loaded?', await page.evaluate(() => !!document.querySelector('#f-video') && document.querySelector('.slot.filled') !== null));
+await page.click('.cloudbar >> text=프로젝트');
+console.log('  usage:', await page.textContent('.usage'), '| item:', await page.textContent('.pj-cloud'));
+await page.screenshot({ path: 'test/s_panel.png' });
+await page.click('.pj-act >> text=열기');
+await page.waitForFunction(() => document.querySelectorAll('.angle').length === 2 && !document.querySelector('.needed') && document.querySelector('.sheet-list'), null, { timeout: 60000 });
+await page.waitForTimeout(1500);
+console.log('3 reopened: slots =', await page.evaluate(() => [...document.querySelectorAll('.slot.filled .slot-name')].map(e => e.textContent)), '| angles', await page.evaluate(() => document.querySelectorAll('.angle').length), '| offset', await page.textContent('.shift-val'));
+console.log('  objects still:', await page.evaluate(() => window.__fakeBlobs.size), '(no re-upload expected 4)');
+// 파일만 지우기
+await page.click('.cloudbar >> text=프로젝트');
+await page.click('.pj-act >> text=파일 지우기'); await page.click('.pj-act >> text=파일만 지우기');
+await page.waitForTimeout(800);
+console.log('4 after clear: objects', await page.evaluate(() => window.__fakeBlobs.size), '| files', JSON.stringify(await page.evaluate(() => Object.values(window.__fakeDump().projects)[0].files)), '| usage', await page.textContent('.usage'));
+await page.click('.pj-act >> text=삭제'); await page.click('.pj-act >> text=정말 삭제');
+await page.waitForTimeout(800);
+console.log('5 after delete: projects', Object.keys(await page.evaluate(() => window.__fakeDump().projects || {})).length);
+console.log(logs.join('\n'));
+await browser.close();

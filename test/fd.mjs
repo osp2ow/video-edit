@@ -1,0 +1,10 @@
+import { chromium } from 'playwright-core';
+const P = '/tmp/claude-0/-home-claude/43674002-dd81-512c-aaaa-34dc46a47316/scratchpad/mp/fd/package/';
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell', args: ['--use-gl=swiftshader','--enable-unsafe-swiftshader'] });
+const page = await browser.newPage();
+const logs = []; page.on('console', m => logs.push(m.text())); page.on('pageerror', e => logs.push('ERR ' + e.message));
+await page.route('**/*', r => { const u = r.request().url(); if (u.includes('cdn.jsdelivr.net/npm/@mediapipe/face_detection')) { const f = u.split('/').pop(); return r.fulfill({ path: P + f }); } if (u.startsWith('http://app.test/')) return r.fulfill({ path: '/home/claude/pve/test/' + u.slice(16) }); return r.continue(); });
+await page.goto('http://app.test/fd.html');
+setTimeout(() => { console.log('TIMEOUT', logs.slice(-15).join('\n')); process.exit(1); }, 60000);
+for (const t of [3, 10, 20]) console.log(t, await page.evaluate(t => run(t), t));
+console.log(logs.slice(-8).join('\n')); await browser.close();

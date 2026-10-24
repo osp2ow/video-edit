@@ -1,0 +1,48 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js', 'firebase-app-compat.js': '/home/claude/pve/test/fake-firebase.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell' });
+const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+const logs = [];
+await ctx.route('**/*', r => {
+  const u = r.request().url();
+  const f = Object.keys(map).find(k => u.endsWith('/' + k));
+  if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' });
+  if (/firebase-(auth|firestore|storage)-compat/.test(u)) return r.fulfill({ body: '', contentType: 'application/javascript' });
+  if (u.endsWith('/config.js')) return r.fulfill({ body: 'window.FIREBASE_CONFIG={apiKey:"test",projectId:"t",storageBucket:"b"};window.APP_ADMINS=["*"];', contentType: 'application/javascript' });
+  if (u.includes('fonts.g')) return r.abort();
+  return r.continue();
+});
+const page = await ctx.newPage();
+page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message));
+await page.goto('http://localhost:8765/deploy/video-editor/index.html');
+await page.evaluate(() => localStorage.clear()); await page.reload();
+await page.evaluate(() => { window.__FAKE_LOGIN = { uid: 'u1', email: 'osp2ow@gmail.com', displayName: '오세혁', emailVerified: true }; });
+await page.click('.btn.google'); await page.waitForSelector('.cloudbar');
+
+await page.setInputFiles('#f-sheet', '/home/claude/poc/in/sheet.pdf');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('자동 감지'), null, { timeout: 60000 });
+await page.setInputFiles('#f-source', 'test/angle2.webm');
+await page.waitForFunction(() => /이어 붙였|맞춰 놓았/.test(document.querySelector('.status')?.textContent || ''), null, { timeout: 60000 });
+await page.setInputFiles('#f-sheet2', '/tmp/claude-0/sheet2.pdf');
+await page.waitForFunction(() => /앞 악보 뒤에 붙였어요/.test(document.querySelector('.status')?.textContent || ''), null, { timeout: 60000 });
+await page.setInputFiles('#f-rec2', '/tmp/claude-0/rec2.mp3');
+await page.waitForFunction(() => /rec2.mp3: /.test(document.querySelector('.status')?.textContent || ''), null, { timeout: 60000 });
+await page.waitForFunction(() => { const p = Object.values(window.__fakeDump().projects || {})[0]; return p && p.files && p.files.recs && p.files.sources && Object.keys(p.files.sources).length && p.files.sheets && Object.keys(p.files.sheets).length; }, null, { timeout: 60000 });
+await page.waitForTimeout(3000);
+await page.click('text=저장'); await page.waitForTimeout(1500);
+let d = Object.values(await page.evaluate(() => window.__fakeDump().projects))[0];
+console.log('doc recNames', JSON.stringify(d.recNames), 'recClips', JSON.stringify(d.project.recClips));
+console.log('doc sourceNames', JSON.stringify(d.sourceNames), 'sheetNames', JSON.stringify(d.sheetNames), 'files', Object.keys(d.files), 'clips', JSON.stringify(d.project.clips?.map(c => c.src || 'M')), 'sheetClips', JSON.stringify(d.project.sheetClips?.map(c => c.sheet || '1')));
+// 다시 열기
+await page.click('.cloudbar >> text=프로젝트'); await page.waitForTimeout(300);
+await page.click('.pj-act >> text=열기');
+await page.waitForFunction(() => document.querySelectorAll('.src-item').length >= 3, null, { timeout: 90000 }).catch(() => {});
+await page.waitForTimeout(3000);
+console.log('after reopen src items:', await page.evaluate(() => [...document.querySelectorAll('.src-item')].map(e => e.textContent).join(' | ')));
+console.log('status', await page.evaluate(() => document.querySelector('.status').textContent), '| needed:', await page.evaluate(() => document.querySelector('.needed')?.textContent || ''));
+const pj = await page.evaluate(() => window.__pveTransport.getProject());
+console.log('clips', JSON.stringify(pj.clips?.map(c => [c.src || 'M', c.start])), 'sheetClips', JSON.stringify(pj.sheetClips?.map(c => [c.sheet || '1', c.start.toFixed(2)])), 'recAt', pj.recAt, 'recClips', JSON.stringify(pj.recClips), 'player extra', await page.evaluate(() => [...window.__pveTransport.player.extraBufs.keys()].join(',')));
+console.log(logs.join('\n')); await browser.close();

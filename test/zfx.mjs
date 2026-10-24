@@ -1,0 +1,28 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell' });
+const page = await browser.newPage({ viewport: { width: 1920, height: 1080 } });
+const logs = []; page.on('pageerror', e => logs.push('PAGEERROR: ' + e.message));
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' }); if (u.includes('fonts.g')) return r.abort(); return r.continue(); });
+await page.goto('file:///home/claude/pve/dist/index.html');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.setInputFiles('#f-rec', '/home/claude/poc/in/rec.mp3');
+await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('자동 감지'), null, { timeout: 60000 });
+await page.setInputFiles('#f-angle', 'test/angle2.webm');
+const tl = await page.locator('.tl-canvas canvas').boundingBox();
+const fxY = tl.y + 28 + 6 + 24 + 6 + 26 + 6 + 13;
+await page.evaluate(() => { document.querySelector('video').currentTime = 6; }); await page.waitForTimeout(300);
+await page.evaluate(() => [...document.querySelectorAll('button')].find(b => b.textContent.trim() === '효과')?.click());
+await page.waitForTimeout(200);
+await page.click('text=+ 확대 구간 추가'); await page.waitForTimeout(200);
+await page.fill('#z-to', '1.3').catch(()=>{});
+await page.evaluate(() => { const i = document.querySelector('#z-to'); const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set; set.call(i,'1.3'); i.dispatchEvent(new Event('input',{bubbles:true})); });
+await page.evaluate(() => document.activeElement.blur());
+for (const t of [10, 12, 14]) { await page.evaluate(t => { document.querySelector('video').currentTime = t; }, t); await page.waitForTimeout(150); await page.keyboard.press('p'); }
+await page.mouse.dblclick(tl.x + 1300, fxY); await page.waitForTimeout(300);
+await page.evaluate(() => { document.querySelector('video').currentTime = 7; }); await page.waitForTimeout(500);
+await page.screenshot({ path: 'test/zfx.png' });
+const fx = (await page.evaluate(() => JSON.parse(localStorage.getItem('pve.proj:test.webm')))).fx;
+console.log('mode', fx.punch, 'zooms', JSON.stringify(fx.zooms), 'punches', fx.punches.map(p => p.t.toFixed(2)+'@'+p.amt).join(' '));
+console.log(logs.join('\n')); await browser.close();

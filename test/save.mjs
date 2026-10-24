@@ -1,0 +1,26 @@
+import { chromium } from 'playwright-core';
+const NM = '/home/claude/pve/node_modules';
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js', 'firebase-app-compat.js': '/home/claude/pve/test/fake-firebase.js' };
+const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium_headless_shell-1194/chrome-linux/headless_shell' });
+const ctx = await browser.newContext({ viewport: { width: 1920, height: 1080 } });
+await ctx.route('**/*', r => {
+  const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k));
+  if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' });
+  if (/firebase-(auth|firestore|storage)-compat/.test(u)) return r.fulfill({ body: '', contentType: 'application/javascript' });
+  if (u.endsWith('/config.js')) return r.fulfill({ body: 'window.FIREBASE_CONFIG={apiKey:"test",projectId:"t",storageBucket:"b"};window.APP_ADMINS=["*"];', contentType: 'application/javascript' });
+  if (u.includes('fonts.g')) return r.abort(); return r.continue();
+});
+const page = await ctx.newPage(); const logs = []; page.on('pageerror', e => logs.push(e.message));
+await page.goto('http://localhost:8765/deploy/video-editor/index.html');
+await page.evaluate(() => localStorage.clear()); await page.reload();
+await page.evaluate(() => { window.__FAKE_LOGIN = { uid: 'u1', email: 'a@b.com', displayName: 'A', emailVerified: true }; });
+await page.click('.btn.google'); await page.waitForSelector('.cloudbar');
+await page.setInputFiles('#f-video', 'test/test.webm');
+await page.waitForFunction(() => document.querySelector('.status')?.textContent?.includes('자동 감지'), null, { timeout: 60000 });
+await page.waitForTimeout(2500);
+await page.fill('#bpm', '100'); await page.keyboard.press('Control+s'); await page.waitForTimeout(300);
+console.log('after Ctrl+S:', await page.textContent('.save'), '| stored bpm', await page.evaluate(() => Object.values(window.__fakeDump().projects)[0].project.bpm));
+await page.evaluate(() => document.activeElement.blur());
+await page.fill('#bpm', '105'); await page.click('.cloudbar button:has-text("저장")'); await page.waitForTimeout(300);
+console.log('after button:', await page.textContent('.save'), '| stored bpm', await page.evaluate(() => Object.values(window.__fakeDump().projects)[0].project.bpm));
+console.log(logs.join('\n')); await browser.close();

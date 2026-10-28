@@ -39,8 +39,20 @@ export function cardSpan(fx: Fx, kind: 'intro' | 'outro', r0: number, r1: number
 }
 export interface Skip { id: string; start: number; end: number }
 /** 기준 영상 조각: 타임라인 start부터, 영상 파일의 [srcIn, srcOut] 부분을 재생 */
-export interface Clip { id: string; start: number; srcIn: number; srcOut: number; src?: string }   // src: 어느 영상 파일인지 (없으면 첫 영상)
+export interface Clip { id: string; start: number; srcIn: number; srcOut: number; src?: string; fadeIn?: number; fadeOut?: number }   // src: 어느 영상 파일인지 (없으면 첫 영상) · fadeIn/Out: 조각 앞뒤 페이드(초, 화면은 검게 · 소리는 작게)
 export const clipEnd = (c: Clip) => c.start + (c.srcOut - c.srcIn);
+/** 영상 조각의 페이드 (조각보다 길면 비율대로 줄임) */
+export function clipFade(c: Clip): { in: number; out: number } {
+  const len = clipEnd(c) - c.start;
+  let a = Math.max(0, c.fadeIn || 0), b = Math.max(0, c.fadeOut || 0);
+  if (a + b > len && a + b > 0) { const k = Math.max(0, len) / (a + b); a *= k; b *= k; }
+  return { in: a, out: b };
+}
+/** 타임라인 t에서 이 영상 조각의 밝기·소리 배율 (0~1) */
+export function clipFadeAt(c: Clip, t: number) {
+  const f = clipFade(c), a = c.start, b = clipEnd(c);
+  return Math.max(0, Math.min(1, f.in > 0 ? (t - a) / f.in : 1, f.out > 0 ? (b - t) / f.out : 1));
+}
 /** 조각 목록 (손대지 않았으면 영상 전체 한 조각 · 예전 '잘라낸 구간'은 빈자리로 바꿈) */
 export function clipsOf(p: Project, dur: number): Clip[] {
   if (p.clips && p.clips.length) return [...p.clips].sort((a, b) => a.start - b.start);
@@ -249,7 +261,7 @@ export const getFx = (p: Project): Fx => {
 export type CutSnap = 'bar' | 'beat' | 'off';
 
 /** 영상 화면 배치: 위치(x,y: 캔버스 크기 대비), 크기 배율, 자르기(원본 대비 0~1) */
-export interface VideoXf { x: number; y: number; scale: number; crop: { l: number; t: number; r: number; b: number } }
+export interface VideoXf { x: number; y: number; scale: number; crop: { l: number; t: number; r: number; b: number }; rot?: number; rotFill?: boolean }   // rot: 수평 맞추기 회전(도) · rotFill: 돌려서 생긴 빈 모서리가 안 보이게 자동 확대 (기본 켜짐)
 export const defaultXf = (): VideoXf => ({ x: 0, y: 0, scale: 1, crop: { l: 0, t: 0, r: 0, b: 0 } });
 
 export type CaptionAnim = 'none' | 'fade' | 'pop' | 'up' | 'type';

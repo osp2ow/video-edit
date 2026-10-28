@@ -4,11 +4,11 @@ import { Muxer, ArrayBufferTarget } from 'mp4-muxer';
 import { CardLayout, Project, Ratio } from './model';
 import { SheetData } from './sheet';
 import { Angle, activeSource } from './angles';
-import { renderComposite } from './effects';
+import { renderComposite, clipTransitionAt } from './effects';
 import { openFrameSource, FrameSource } from './decoder';
 import { MAIN } from './model';
 import { preloadCaptionFonts } from './render';
-import { getFx, trimOf, clipsOf, clipEnd, Clip, recAtOf, recKeyOf, MAIN_REC, fadeOf, scheduleFade } from './model';
+import { getFx, trimOf, clipsOf, clipEnd, Clip, recAtOf, recKeyOf, MAIN_REC, fadeOf, scheduleFade, clipFade, Fade } from './model';
 
 // TS 기본 타입에 아직 없는 WebCodecs 오디오 API
 declare const AudioEncoder: any;
@@ -138,7 +138,7 @@ export async function mixAudio(inp: ExportInput, start: number, end: number): Pr
   if (fx.audioFade && fx.fadeOut > 0) { const a = Math.max(0, dur - fx.fadeOut); master.gain.setValueAtTime(1, a); master.gain.linearRampToValueAtTime(0, dur); }
   // 영상 조각마다 그 영상의 소리 (빈자리는 조용히) + 녹음본은 타임라인에 놓인 그대로 처음부터 끝까지
   const srcDur = inp.master.duration || 0;
-  const placeAt = (buf: AudioBuffer, outAt: number, srcFrom: number, len: number, vol: number, tin = 0, tout = buf.duration, fade?: { key: string; at: number }) => {
+  const placeAt = (buf: AudioBuffer, outAt: number, srcFrom: number, len: number, vol: number, tin = 0, tout = buf.duration, fade?: { TS: number; TE: number; f: Fade }) => {
     const from = Math.max(srcFrom, tin, 0), to = Math.min(srcFrom + len, tout, buf.duration);
     if (to - from <= 0.001) return;
     const s = ctx.createBufferSource(); s.buffer = buf;
@@ -148,9 +148,9 @@ export async function mixAudio(inp: ExportInput, start: number, end: number): Pr
     g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(vol, at + Math.min(0.005, d / 2));
     g.gain.setValueAtTime(vol, at + Math.max(0, d - 0.005)); g.gain.linearRampToValueAtTime(0, at + d);
     if (fade) {
-      // 녹음본 조각 페이드 (타임라인 시간 → 추출 시간 = 타임라인 − start)
-      const fg = ctx.createGain(), TS = fade.at + tin, TE = fade.at + tout;
-      scheduleFade(fg.gain, t => t - start, TS, TE, fadeOf(p, fade.key, TE - TS), Math.max(start, TS));
+      // 조각 페이드 (타임라인 시간 → 추출 시간 = 타임라인 − start)
+      const fg = ctx.createGain();
+      scheduleFade(fg.gain, t => t - start, fade.TS, fade.TE, fade.f, Math.max(start, fade.TS, start + at));
       s.connect(g); g.connect(fg); fg.connect(master);
     } else { s.connect(g); g.connect(master); }
     s.start(at, from, d);
@@ -159,16 +159,16 @@ export async function mixAudio(inp: ExportInput, start: number, end: number): Pr
     if (!pc.clip) continue;
     const s0 = pc.clip.srcIn + (pc.a - pc.clip.start), len = pc.b - pc.a, outAt = pc.a - start;
     const vbuf = pc.clip.src ? inp.sourceAudio?.get(pc.clip.src) ?? null : inp.masterAudio;
-    if (vbuf && !p.videoMuted && p.videoVol > 0) placeAt(vbuf, outAt, s0, len, p.videoVol);
+    if (vbuf && !p.videoMuted && p.videoVol > 0) placeAt(vbuf, outAt, s0, len, p.videoVol, 0, vbuf.duration, { TS: pc.clip.start, TE: clipEnd(pc.clip), f: clipFade(pc.clip) });
   }
   if (inp.recAudio && !p.recMuted && p.recVol > 0) {
     const tr = trimOf(p, 'rec', inp.recAudio.duration), recAt = recAtOf(p, srcDur);
-    placeAt(inp.recAudio, 0, start - recAt, end - start, p.recVol, tr.in, tr.out, { key: 'rec', at: recAt });
+    placeAt(inp.recAudio, 0, start - recAt, end - start, p.recVol, tr.in, tr.out, { TS: recAt + tr.in, TE: recAt + tr.out, f: fadeOf(p, 'rec', tr.out - tr.in) });
   }
   if (!p.recMuted && p.recVol > 0) for (const c of p.recClips || []) {
     const b = c.src === MAIN_REC ? inp.recAudio : inp.extraRecs?.get(c.src); if (!b) continue;
     const tr = trimOf(p, recKeyOf(c), b.duration);
-    placeAt(b, 0, start - c.at, end - start, p.recVol, tr.in, tr.out, { key: recKeyOf(c), at: c.at });
+    placeAt(b, 0, start - c.at, end - start, p.recVol, tr.in, tr.out, { TS: c.at + tr.in, TE: c.at + tr.out, f: fadeOf(p, recKeyOf(c), tr.out - tr.in) });
   }
   const out = await ctx.startRendering();
   // 시작·끝 10ms 페이드 (딸깍 소리 방지)
@@ -250,9 +250,10 @@ export async function exportMp4(inp: ExportInput, o: ExportOptions, plan: CodecP
   onProgress(0, '영상 준비 중');
   const used = new Set(pieces.filter(pc => pc.clip).map(pc => pc.clip!.src || MAIN));
   const decoded = await openDecoded(master, inp.angles, srcEls, used);
-  let frames: Map<string, HTMLVideoElement | null> | undefined;
+  const snapPool = new Map<string, HTMLCanvasElement>();
+  let frames: Map<string, HTMLVideoElement | null> | undefined, framesFrom: Map<string, HTMLVideoElement | null> | undefined;
   const emitFrame = (T: number) => {
-    renderComposite(ctx, W, H, T, { master, angles: inp.angles, sources: srcEls, sheets: inp.sheets, project: inp.project, sheet: inp.sheet, layout: inp.layout, range: [start, end], frames });
+    renderComposite(ctx, W, H, T, { master, angles: inp.angles, sources: srcEls, sheets: inp.sheets, project: inp.project, sheet: inp.sheet, layout: inp.layout, range: [start, end], frames, framesFrom });
     const vf = new VideoFrame(canvas, { timestamp: Math.round(k / o.fps * 1e6), duration: Math.round(1e6 / o.fps) });
     venc.encode(vf, { keyFrame: k % (o.fps * 2) === 0 });
     vf.close();
@@ -272,20 +273,40 @@ export async function exportMp4(inp: ExportInput, o: ExportOptions, plan: CodecP
         if (signal.aborted) throw new DOMException('취소', 'AbortError');
         if (encErr) throw encErr;
         const T = pc.a + i / o.fps;
-        if (pc.clip) {
-          const s = pc.clip.srcIn + (T - pc.clip.start);
-          frames = new Map();
-          if (pc.clip.src) {
-            const d = decoded.sources.get(pc.clip.src);
-            frames.set('src:' + pc.clip.src, d ? (await d.frameAt(s)) as any : null);
+        // 이 조각(clip)의 타임라인 시각 tt 장면들
+        const framesOf = async (clip: Clip, tt: number) => {
+          const s = clip.srcIn + (tt - clip.start), m = new Map<string, HTMLVideoElement | null>();
+          if (clip.src) {
+            const d = decoded.sources.get(clip.src);
+            m.set('src:' + clip.src, d ? (await d.frameAt(s)) as any : null);
           } else {
-          frames.set(MAIN, decoded.main ? (await decoded.main.frameAt(s)) as any : null);
-          for (const [id, src] of decoded.angles) {
-            const at = s + (inp.project.angleOffsets[id] || 0);
-            frames.set(id, at >= 0 && at <= src.duration + 0.1 ? (await src.frameAt(at)) as any : null);
+            m.set(MAIN, decoded.main ? (await decoded.main.frameAt(s)) as any : null);
+            for (const [id, src] of decoded.angles) {
+              const at = s + (inp.project.angleOffsets[id] || 0);
+              m.set(id, at >= 0 && at <= src.duration + 0.1 ? (await src.frameAt(at)) as any : null);
+            }
           }
+          return m;
+        };
+        // 영상 조각 사이 장면 전환 중이면 앞 조각(끝 장면)과 뒤 조각(첫 장면)을 같이 풀어 둠
+        const ct = clipTransitionAt(inp.project, T, master.duration || 0);
+        framesFrom = undefined;
+        if (ct) {
+          // 같은 영상 파일이면 디코더가 같은 캔버스를 다시 쓰므로 앞 조각 장면은 따로 베껴 둠
+          const fa = await framesOf(ct.A, ct.tA);
+          framesFrom = new Map();
+          for (const [id, img] of fa) {
+            if (!img) { framesFrom.set(id, null); continue; }
+            let c = snapPool.get(id); if (!c) { c = document.createElement('canvas'); snapPool.set(id, c); }
+            const w = (img as any).videoWidth || (img as any).width, h = (img as any).videoHeight || (img as any).height;
+            if (c.width !== w || c.height !== h) { c.width = w; c.height = h; }
+            c.getContext('2d')!.drawImage(img as any, 0, 0);
+            (c as any).videoWidth = w; (c as any).videoHeight = h;
+            framesFrom.set(id, c as any);
           }
-        } else frames = new Map();
+          frames = await framesOf(ct.B, ct.tB);
+        }
+        else frames = pc.clip ? await framesOf(pc.clip, T) : new Map();
         emitFrame(T);
         await drain();
         if (k % 15 === 0) onProgress(k / total, '영상 만드는 중');

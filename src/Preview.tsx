@@ -29,7 +29,8 @@ interface Props {
   viewTrack: string | null;   // 타임라인에서 고른 앵글만 보기
   viewLabel: string;
   onXf: (id: string, xf: VideoXf) => void;
-  onPip?: (pos: PipPos | null) => void;   // PIP 작은 화면 옮기기·크기 (null = 기본 자리로)
+  onPip?: (pos: PipPos | null) => void;
+  levelGrid?: boolean;   // 수평 맞추기용 격자   // PIP 작은 화면 옮기기·크기 (null = 기본 자리로)
   onCaptionMove: (id: string, x: number, y: number) => void;
   onCardStyle?: (kind: 'intro' | 'outro', patch: Partial<CardStyle>) => void;
   onEditCard?: (kind: 'intro' | 'outro', page?: string) => void;
@@ -134,6 +135,7 @@ export function Preview(props: Props) {
           // 영상을 옮기는 중이면 영상 테두리와 가이드
           if (drag.current?.mode === 'video' && src && xf) drawVideoGuides(ctx, w, h, src.video, xf, drag.current.guides);
         }
+        if (live.current.levelGrid && !clean) drawLevelGrid(ctx, w, h);
         if (live.current.viewLabel && !clean) drawBadge(ctx, w, live.current.viewLabel);
       }
       raf = requestAnimationFrame(loop);
@@ -519,6 +521,23 @@ function drawVideoGuides(ctx: CanvasRenderingContext2D, W: number, H: number, vi
     if (g.x !== undefined) { ctx.moveTo(g.x, 0); ctx.lineTo(g.x, H); }
     if (g.y !== undefined) { ctx.moveTo(0, g.y); ctx.lineTo(W, g.y); }
     ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/** 수평 맞추기 격자 (가로·세로 8칸, 가운데 선은 진하게) */
+function drawLevelGrid(ctx: CanvasRenderingContext2D, W: number, H: number) {
+  ctx.save();
+  const n = 8, step = W / n;
+  for (let i = 1; i * step < Math.max(W, H); i++) {
+    const strong = (i * step === W / 2);
+    ctx.strokeStyle = strong ? 'rgba(255,214,120,0.8)' : 'rgba(255,255,255,0.35)'; ctx.lineWidth = strong ? 2 : 1;
+    if (i * step < W) { ctx.beginPath(); ctx.moveTo(i * step, 0); ctx.lineTo(i * step, H); ctx.stroke(); }
+  }
+  for (let y = H / 2 % step; y < H; y += step) {
+    const strong = Math.abs(y - H / 2) < 1;
+    ctx.strokeStyle = strong ? 'rgba(255,214,120,0.8)' : 'rgba(255,255,255,0.35)'; ctx.lineWidth = strong ? 2 : 1;
+    ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y); ctx.stroke();
   }
   ctx.restore();
 }

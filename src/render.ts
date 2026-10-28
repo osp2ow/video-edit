@@ -159,7 +159,16 @@ export function drawVideo(ctx: CanvasRenderingContext2D, W: number, H: number, v
   const vw = video.videoWidth, vh = video.videoHeight, c = xf.crop;
   const d = croppedRect(W, H, vw, vh, xf);
   if (d.w <= 1 || d.h <= 1) return;
-  ctx.drawImage(video, c.l * vw, c.t * vh, vw * (1 - c.l - c.r), vh * (1 - c.t - c.b), d.x, d.y, d.w, d.h);
+  const rot = xf.rot || 0;
+  if (Math.abs(rot) < 0.01) { ctx.drawImage(video, c.l * vw, c.t * vh, vw * (1 - c.l - c.r), vh * (1 - c.t - c.b), d.x, d.y, d.w, d.h); return; }
+  // 수평 맞추기: 보이는 사각형 가운데를 중심으로 돌림. 빈 모서리 채우기면 그 사각형을 꽉 채우게 확대하고 바깥은 잘라냄
+  const th = Math.abs(rot) * Math.PI / 180, fill = xf.rotFill !== false;
+  const k = fill ? Math.cos(th) + Math.max(d.w / d.h, d.h / d.w) * Math.sin(th) : 1;
+  ctx.save();
+  if (fill) { ctx.beginPath(); ctx.rect(d.x, d.y, d.w, d.h); ctx.clip(); }
+  ctx.translate(d.x + d.w / 2, d.y + d.h / 2); ctx.rotate(rot * Math.PI / 180); ctx.scale(k, k);
+  ctx.drawImage(video, c.l * vw, c.t * vh, vw * (1 - c.l - c.r), vh * (1 - c.t - c.b), -d.w / 2, -d.h / 2, d.w, d.h);
+  ctx.restore();
 }
 
 export function drawCard(ctx: CanvasRenderingContext2D, W: number, H: number, t: number,

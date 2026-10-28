@@ -1,5 +1,5 @@
 // 타임라인: 마디 눈금(고정) + 앵글 전환 줄 + 파형 줄(영상·앵글들·녹음본, 세로 스크롤) + 재생 위치
-import { Project, Cut, Caption, ZoomSeg, Punch, getFx, markKind, cardSpan, cardPages, CardPage, SheetClip, sheetClipsOf, sheetClipEnd, Skip, mergeSkips, trimOf, Clip, clipsOf, clipEnd, sheetPos, MARK_KINDS, MARK_AMT, MarkKind, MAIN, TRANS_LIST, TransType, barAt, barStart, beatLen, barLen, normalizeCuts, sheetStart, sheetEnd, Fx, clipBarLen, snapTime, bpmAt, recKeyOf, fadeOf, Fade } from './model';
+import { Project, Cut, Caption, ZoomSeg, Punch, getFx, markKind, cardSpan, cardPages, CardPage, SheetClip, sheetClipsOf, sheetClipEnd, Skip, mergeSkips, trimOf, Clip, clipsOf, clipEnd, sheetPos, MARK_KINDS, MARK_AMT, MarkKind, MAIN, TRANS_LIST, TransType, barAt, barStart, beatLen, barLen, normalizeCuts, sheetStart, sheetEnd, Fx, clipBarLen, snapTime, bpmAt, recKeyOf, fadeOf, Fade, clipFade, RecClip, MAIN_REC, Trim } from './model';
 import { Track, PEAKS_RATE } from './analysis';
 
 const { useRef, useEffect, useState } = React;
@@ -58,7 +58,7 @@ interface Props {
   srcDurOf?: (src?: string) => number;          // 영상 파일별 길이
   srcLabelOf?: (src?: string) => string;        // 영상 파일 이름 (조각 위에 표시)
   recExtras?: { key: string; src: string; name: string; at: number; track: Track | null; dur: number }[];   // 녹음본 조각들 (추가 녹음본 · 잘라서 생긴 조각)
-  onRecFade?: (key: string, f: Fade) => void;   // 녹음본 조각 페이드 인·아웃
+  onFade?: (key: string, f: Fade) => void;   // 페이드 인·아웃: 녹음본 조각('rec'·'recx:…') · 영상 조각('clip:id')
   onSplitRec?: (t: number, key: string | null) => string | null;   // 녹음본 자르기 (I) → 새 조각 키
   onDeleteRec?: (key: string) => void;                              // 녹음본 조각 지우기
   recName?: string;                             // 첫 녹음본 파일 이름
@@ -100,6 +100,13 @@ function silentTrack(dur: number): Track | null {
   if (!t) { t = { mono: new Float32Array(0), env: new Float32Array(0), low: new Float32Array(0), mid: new Float32Array(0), peaks: new Float32Array(0), onsets: [], duration: dur, bias: 0 }; silentCache.set(dur, t); }
   return t;
 }
+
+/** 타임라인 복사·붙여넣기 (이 창 안에서만, 프로젝트를 바꿔도 남아 있음) */
+type CopyItem =
+  | { k: 'cap'; v: Caption } | { k: 'zoom'; v: ZoomSeg } | { k: 'punch'; v: Punch } | { k: 'clip'; v: Clip } | { k: 'sheet'; v: SheetClip }
+  | { k: 'rec'; src: string; at: number; trim: Trim; fade?: Fade };
+let clipboard: CopyItem[] | null = null;
+const itemStart = (it: CopyItem) => it.k === 'cap' || it.k === 'zoom' || it.k === 'clip' || it.k === 'sheet' ? it.v.start : it.k === 'punch' ? it.v.t : it.at + it.trim.in;
 
 export function Timeline(props: Props) {
   const wrap = useRef<HTMLDivElement>(null);
@@ -429,9 +436,9 @@ export function Timeline(props: Props) {
           }
           ctx.restore();
           ctx.globalAlpha = 1;
-          // 녹음본 페이드: 어둡게 덮은 삼각형 + 위쪽 손잡이 (끌어서 길이 조절)
-          if (r.id === 'rec') {
-            const key = rx ? c.id : 'rec', f = fadeOf(p, key, fb - fa);
+          // 페이드 (녹음본 조각 · 영상 조각): 어둡게 덮은 삼각형 + 위쪽 손잡이 (끌어서 길이 조절)
+          if (r.id === 'rec' || r.id === 'main') {
+            const key = r.id === 'main' ? 'clip:' + c.id : rx ? c.id : 'rec', f = fadeFor(key, fb - fa);
             const top = y + 1.5, bot = y + ROW - 1.5, xi = X(fa + f.in), xo = X(fb - f.out);
             ctx.save(); ctx.beginPath(); ctx.roundRect(pa, top, Math.max(2, pb - pa), ROW - 3, 5); ctx.clip();
             ctx.fillStyle = 'rgba(10,8,6,0.55)'; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.2;
@@ -742,16 +749,30 @@ export function Timeline(props: Props) {
     if (live.current.rTrack) { const tr = trimOf(p, 'rec', live.current.rTrack.duration), at = live.current.recAt; if (tr.out - tr.in > 0.01) out.push({ key: 'rec', a: at + tr.in, b: at + tr.out }); }
     return out;
   };
-  /** 녹음본 조각 위쪽의 페이드 손잡이 근처인지 */
+  /** 영상 조각들의 타임라인 범위 (키 'clip:id', 위에 그려진 것부터) */
+  const clipPieces = () => clipsOf(live.current.project, live.current.srcDur).map(c => ({ key: 'clip:' + c.id, a: c.start, b: clipEnd(c) })).reverse();
+  /** 페이드 값: 영상 조각은 조각에 저장, 녹음본은 recFades */
+  const fadeFor = (key: string, len: number): Fade => {
+    const p = live.current.project;
+    if (key.startsWith('clip:')) { const c = clipsOf(p, live.current.srcDur).find(x => x.id === key.slice(5)); return c ? clipFade(c) : { in: 0, out: 0 }; }
+    return fadeOf(p, key, len);
+  };
+  /** 녹음본·영상 조각 위쪽의 페이드 손잡이 근처인지 */
   const fadeHandleAt = (clientX: number, clientY: number) => {
-    if (!live.current.onRecFade || trackAt(clientY) !== 'rec') return null;
+    const row = trackAt(clientY);
+    if (!live.current.onFade || (row !== 'rec' && row !== 'main')) return null;
+    if (row === 'main' && !(live.current.vTrack || live.current.srcDur)) return null;
     const r = canvas.current!.getBoundingClientRect(), v = view.current;
-    const i = 1 + live.current.angleTracks.length, top = RULER + ROWS_Y + i * (ROW + GAP) - scrollY.current;
+    const i = row === 'main' ? 0 : 1 + live.current.angleTracks.length, top = RULER + ROWS_Y + i * (ROW + GAP) - scrollY.current;
     const yy = clientY - r.top - top;
     if (yy < 0 || yy > 13) return null;
     const x = clientX - r.left, tx = (t: number) => (t - v.start) * v.pps;
-    for (const pc of recPieces()) {
-      const f = fadeOf(live.current.project, pc.key, pc.b - pc.a);
+    // 맞닿은 조각 경계에서는 지금 고른 조각의 손잡이를 먼저
+    const selKey = row === 'main' ? (selClipRef.current ? 'clip:' + selClipRef.current : null) : selRecRef.current;
+    const list = row === 'main' ? clipPieces() : recPieces();
+    list.sort((a, b) => (b.key === selKey ? 1 : 0) - (a.key === selKey ? 1 : 0));
+    for (const pc of list) {
+      const f = fadeFor(pc.key, pc.b - pc.a);
       if (Math.abs(x - tx(pc.a + f.in)) <= 7 && x >= tx(pc.a) - 2) return { ...pc, edge: 'in' as const };
       if (Math.abs(x - tx(pc.b - f.out)) <= 7 && x <= tx(pc.b) + 2) return { ...pc, edge: 'out' as const };
     }
@@ -844,6 +865,88 @@ export function Timeline(props: Props) {
     }
     return out;
   };
+  /** 복사할 요소 키: 전체 선택 · 여러 개 선택 · 하나 고른 것 순 */
+  const copyKeys = (): string[] => {
+    const lp = live.current, P = lp.project, fx = getFx(P);
+    if (allSel.current) {
+      const ks = [...(P.captions || []).map(c => 'cap:' + c.id), ...fx.zooms.map(z => 'zoom:' + z.id), ...fx.punches.map(u => 'punch:' + u.id)];
+      if (lp.vTrack || lp.srcDur) ks.push(...clipsOf(P, lp.srcDur).map(c => 'clip:' + c.id));
+      if (lp.hasSheet) ks.push(...sheetClipsOf(P, lp.nBars).map(c => 'sheet:' + c.id));
+      ks.push(...recPieces().map(x => 'rec:' + x.key));
+      return ks;
+    }
+    if (msel.current.size) return [...msel.current];
+    const one = singleSelKey();
+    return one ? [one] : [];
+  };
+  /** 고른 요소들을 복사 (지금 모습 그대로 저장) → 복사한 개수 */
+  const copySelected = (): number => {
+    const lp = live.current, P = lp.project, fx = getFx(P), out: CopyItem[] = [];
+    const clips = clipsOf(P, lp.srcDur), sheets = lp.hasSheet ? sheetClipsOf(P, lp.nBars) : [];
+    for (const key of copyKeys()) {
+      const i = key.indexOf(':'), kind = key.slice(0, i), id = key.slice(i + 1);
+      const cp = <T,>(v: T): T => JSON.parse(JSON.stringify(v));
+      if (kind === 'cap') { const c = (P.captions || []).find(x => x.id === id); if (c) out.push({ k: 'cap', v: cp(c) }); }
+      else if (kind === 'zoom') { const z = fx.zooms.find(x => x.id === id); if (z) out.push({ k: 'zoom', v: cp(z) }); }
+      else if (kind === 'punch') { const u = fx.punches.find(x => x.id === id); if (u) out.push({ k: 'punch', v: cp(u) }); }
+      else if (kind === 'clip') { const c = clips.find(x => x.id === id); if (c) out.push({ k: 'clip', v: cp(c) }); }
+      else if (kind === 'sheet') { const c = sheets.find(x => x.id === id); if (c) out.push({ k: 'sheet', v: cp(c) }); }
+      else if (kind === 'rec') {
+        if (id === 'rec' && lp.rTrack) out.push({ k: 'rec', src: MAIN_REC, at: lp.recAt, trim: trimOf(P, 'rec', lp.rTrack.duration), fade: P.recFades?.rec });
+        else {
+          const c = (P.recClips || []).find(x => recKeyOf(x) === id), rx = (lp.recExtras || []).find(x => x.key === id);
+          if (c && rx) out.push({ k: 'rec', src: c.src, at: c.at, trim: trimOf(P, id, rx.dur || rx.track?.duration || 0), fade: P.recFades?.[id] });
+        }
+      }
+    }
+    if (out.length) clipboard = out;
+    return out.length;
+  };
+  /** 복사한 요소들을 재생 위치에 붙여넣기 (여러 개면 서로 간격 그대로, 맨 앞 요소가 재생 위치에) */
+  const pasteAtPlayhead = (): number => {
+    const items = clipboard; if (!items?.length) return 0;
+    const lp = live.current, P = lp.project, fx = getFx(P);
+    const t0 = Math.min(...items.map(itemStart));
+    const T = Math.max(0, lp.now());
+    const dt = T - t0;
+    const uid = (() => { const base = Date.now().toString(36); let n = 0; return (pre: string) => pre + base + (n++).toString(36); })();
+    const keys = new Set<string>();
+    const caps = [...(P.captions || [])], zooms = [...fx.zooms], punches = [...fx.punches];
+    let clips: Clip[] | null = null, sheets: SheetClip[] | null = null, recClips: RecClip[] | null = null;
+    const trims = { ...(P.trims || {}) }, fades = { ...(P.recFades || {}) };
+    for (const it of items) {
+      if (it.k === 'cap') { const id = uid('cap'); caps.push({ ...it.v, id, start: it.v.start + dt, end: it.v.end + dt }); keys.add('cap:' + id); }
+      else if (it.k === 'zoom') { const id = uid('z'); zooms.push({ ...it.v, id, start: it.v.start + dt, end: it.v.end + dt }); keys.add('zoom:' + id); }
+      else if (it.k === 'punch') { const id = uid('m'); punches.push({ ...it.v, id, t: it.v.t + dt }); keys.add('punch:' + id); }
+      else if (it.k === 'clip') {
+        if (!(lp.vTrack || lp.srcDur)) continue;
+        clips = clips || clipsOf(P, lp.srcDur);
+        const id = uid('c'); clips.push({ ...it.v, id, start: Math.round((it.v.start + dt) * 1000) / 1000 }); keys.add('clip:' + id);
+      } else if (it.k === 'sheet') {
+        if (!lp.hasSheet) continue;
+        sheets = sheets || sheetClipsOf(P, lp.nBars);
+        const id = uid('k'); sheets.push({ ...it.v, id, start: Math.round((it.v.start + dt) * 1000) / 1000 }); keys.add('sheet:' + id);
+      } else {
+        if (it.src === MAIN_REC ? !lp.rTrack : !(lp.recExtras || []).some(x => x.src === it.src)) continue;   // 그 녹음본 파일이 없으면 건너뜀
+        recClips = recClips || [...(P.recClips || [])];
+        const nc: RecClip = { src: it.src, at: Math.round((it.at + dt) * 1000) / 1000, id: uid('r') };
+        recClips.push(nc); trims[recKeyOf(nc)] = { ...it.trim }; if (it.fade) fades[recKeyOf(nc)] = { ...it.fade };
+        keys.add('rec:' + recKeyOf(nc));
+      }
+    }
+    if (!keys.size) return 0;
+    const patch: Partial<Project> = { captions: caps, fx: { ...fx, zooms, punches } };
+    if (clips) { patch.clips = clips; patch.skips = []; }
+    if (sheets) patch.sheetClips = sheets;
+    if (recClips) { patch.recClips = recClips; patch.trims = trims; patch.recFades = fades; }
+    lp.onGroup(patch);
+    // 붙여넣은 것들을 골라 둠 (바로 끌어서 옮기거나 Delete로 지울 수 있게)
+    allSel.current = false; selSheet.current = null; pickClip(null); selRecRef.current = null;
+    lp.onSelectCaption(null); lp.onSelectFx(null);
+    msel.current = keys; force(n => n + 1);
+    return keys.size;
+  };
+
   /** 고른 것들 한꺼번에 지우기 (되돌리기 한 번으로 살아남) */
   const deleteSelected = () => {
     const lp = live.current, P = lp.project, fx = getFx(P), s = msel.current;
@@ -937,6 +1040,17 @@ export function Timeline(props: Props) {
         else if (e.code === 'ArrowLeft') zoomRef.current(1 / 1.3, at);
         else if (e.code === 'ArrowUp') { setRowH(ROW * 1.2); force(n => n + 1); }
         else if (e.code === 'ArrowDown') { setRowH(ROW / 1.2); force(n => n + 1); }
+        return;
+      }
+      // Cmd(맥)·Ctrl(윈도우) + C / V: 고른 요소 복사 · 재생 위치에 붙여넣기
+      if (!typing && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey && (e.code === 'KeyC' || e.code === 'KeyV')) {
+        if (e.code === 'KeyC') {
+          if (String(window.getSelection() || '').trim()) return;   // 화면 글자를 고른 상태면 보통 복사
+          const n = copySelected();
+          if (n) { e.preventDefault(); e.stopImmediatePropagation(); flashTip(`${n}개 복사했어요 · 재생 위치를 옮기고 ${navigator.platform.includes('Mac') ? '⌘' : 'Ctrl+'}V로 붙여넣기`); }
+          return;
+        }
+        if (clipboard?.length) { e.preventDefault(); e.stopImmediatePropagation(); const n = pasteAtPlayhead(); flashTip(n ? `${n}개 붙여넣었어요` : '붙여넣을 수 있는 요소가 없어요 (그 파일이 이 프로젝트에 없어요)'); }
         return;
       }
       // Cmd(맥)·Ctrl(윈도우) + A: 타임라인 요소 전체 선택 (Esc로 풀기)
@@ -1119,7 +1233,9 @@ export function Timeline(props: Props) {
     {
       const fh = fadeHandleAt(e.clientX, e.clientY);
       if (fh) {
-        live.current.onSelect('rec'); selRecRef.current = fh.key; selSheet.current = null;
+        selSheet.current = null;
+        if (fh.key.startsWith('clip:')) { live.current.onSelect('main'); pickClip(clipsOf(live.current.project, live.current.srcDur).find(c => c.id === fh.key.slice(5)) || null); }
+        else { live.current.onSelect('rec'); selRecRef.current = fh.key; }
         fadeDrag.current = { key: fh.key, edge: fh.edge, a: fh.a, b: fh.b };
         force(n => n + 1);
         return;
@@ -1230,10 +1346,10 @@ export function Timeline(props: Props) {
     const pps = view.current.pps;
     const lp = live.current, P = lp.project, bt = 60 / P.bpm;
     if (fadeDrag.current) {
-      const d = fadeDrag.current, len = d.b - d.a, f = fadeOf(P, d.key, len), tm = timeAt(e.clientX);
+      const d = fadeDrag.current, len = d.b - d.a, f = fadeFor(d.key, len), tm = timeAt(e.clientX);
       const r5 = (v: number) => Math.round(v * 20) / 20;
       const next = d.edge === 'in' ? { in: r5(Math.max(0, Math.min(len - f.out, tm - d.a))), out: f.out } : { in: f.in, out: r5(Math.max(0, Math.min(len - f.in, d.b - tm))) };
-      lp.onRecFade?.(d.key, next);
+      lp.onFade?.(d.key, next);
       tip.current = { text: `페이드 ${d.edge === 'in' ? '인' : '아웃'} ${(d.edge === 'in' ? next.in : next.out).toFixed(2)}초`, x: e.clientX };
       e.currentTarget.style.cursor = 'ew-resize';
       return;
@@ -1648,6 +1764,8 @@ export function Timeline(props: Props) {
     <div className="timeline">
       <div className="tl-head">
         <span className="tl-title">타임라인</span>
+        <button type="button" className="btn sm" onClick={() => { const n = copySelected(); flashTip(n ? `${n}개 복사했어요 · 재생 위치를 옮기고 붙여넣기` : '복사할 요소를 먼저 골라 주세요 (클릭 · 끌어서 네모 · Ctrl/Cmd+클릭)'); }} title="고른 요소 복사 (Ctrl/Cmd+C) — 영상·녹음본·악보·자막·효과">복사</button>
+        <button type="button" className="btn sm" onClick={() => { const n = pasteAtPlayhead(); flashTip(n ? `${n}개 붙여넣었어요` : '먼저 요소를 복사해 주세요'); }} title="복사한 요소를 재생 위치에 붙여넣기 (Ctrl/Cmd+V)">붙여넣기</button>
         <button type="button" className="btn sm" onClick={() => splitAtPlayhead()} title="재생 위치에서 고른 조각을 둘로 자르기 (I). 자른 조각은 끌어서 옮기거나 Delete로 지울 수 있어요">✂ 자르기 <span className="dim">I</span></button>
         <button type="button" className={`btn sm tl-loop ${props.project.cycle?.on ? 'on' : ''}`} disabled={!props.project.cycle} aria-pressed={!!props.project.cycle?.on}
           onClick={() => props.project.cycle && props.onCycle({ ...props.project.cycle, on: !props.project.cycle.on })} title="눈금 줄 맨 위 띠를 끌어서 구간을 만들고, 켜면 그 구간만 반복 재생·추출 (C · 노란 띠 클릭)">🔁 구간 반복 <span className="dim">C</span></button>
@@ -1658,11 +1776,11 @@ export function Timeline(props: Props) {
           const name = (c.sheet || (props.sheetNames || [])[0] || '악보').replace(/\.[^.]+$/, '');
           return <BpmBox key={c.id} label={name} bpm={c.bpm} base={bpmAt(props.project, c.start - 1e-3)} onBpm={b => props.onSheetBpm!(c.id, b)} />;
         })()}
-        {props.onRecFade && props.selected === 'rec' && selRecRef.current && (() => {
-          const pc = recPieces().find(x => x.key === selRecRef.current);
+        {props.onFade && ((props.selected === 'rec' && selRecRef.current) || (props.selected === 'main' && selClipRef.current)) && (() => {
+          const pc = props.selected === 'main' ? clipPieces().find(x => x.key === 'clip:' + selClipRef.current) : recPieces().find(x => x.key === selRecRef.current);
           if (!pc) return null;
-          const f = fadeOf(props.project, pc.key, pc.b - pc.a);
-          return <FadeBox key={pc.key} fade={f} max={pc.b - pc.a} onFade={nf => props.onRecFade!(pc.key, nf)} />;
+          const f = fadeFor(pc.key, pc.b - pc.a);
+          return <FadeBox key={pc.key} fade={f} max={pc.b - pc.a} onFade={nf => props.onFade!(pc.key, nf)} />;
         })()}
         {props.hasSheet && props.project.sheetClips && <button type="button" className="btn ghost sm" onClick={() => { selSheet.current = null; props.onSheetClips(null); }} title="악보 조각 편집을 지우고 1마디부터 악보 전체로 다시 넣기">악보 처음대로</button>}
         <div className="tl-zoom">

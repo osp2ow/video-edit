@@ -181,7 +181,8 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const [cropMode, setCropMode] = useState(false);
   // 타임라인에서 고른 트랙: 'program'(결과물) | 'main' | 앵글 id | 'rec'
   const [selTrack, setSelTrack] = useState('program');
-  const [selClipSrc, setSelClipSrc] = useState<string | null>(null);   // 타임라인에서 고른 영상 조각의 파일 (MAIN = 첫 영상)
+  const [selClipSrc, setSelClipSrc] = useState<string | null>(null);
+  const [levelGrid, setLevelGrid] = useState(false);   // 회전 슬라이더를 만지는 동안 미리보기에 수평 격자   // 타임라인에서 고른 영상 조각의 파일 (MAIN = 첫 영상)
   const [inOut, setInOut] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
   const [selCaption, setSelCaption] = useState<string | null>(null);
   const [studioOpen, setStudioOpen] = useState(false);
@@ -1777,6 +1778,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             onEditCard={(k, page) => { setSelCard(k); setRightTab('fx'); setTimeout(() => { const el = document.getElementById(page && page !== FIRST_PAGE ? `outro-page-${page}-title` : k + '-title') as HTMLTextAreaElement | null; el?.focus(); el?.select(); }, 60); }}
             selCaption={selCaption} onSelectCaption={setSelCaption} onCaptionText={(id, text) => updateCaption(id, { text })}
             cropMode={cropMode} viewTrack={viewTrack} viewLabel={viewTrack ? `${viewNum}번 앵글 보는 중` : ''} onXf={(id, xf) => setProject({ frames: withXf(projRef.current, ratio, id, xf) })}
+            levelGrid={levelGrid}
             onPip={pos => { const pp = { ...(projRef.current.pip || {}) }; if (pos) pp[ratio] = pos; else delete pp[ratio]; setProject({ pip: pp }); }} />
           <NeededFiles need={needList} onClose={() => setWant(null)} />
           {remoteEdit && (
@@ -1832,6 +1834,20 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             <label htmlFor="vscale">크기 <span className="mono dim">{Math.round(curXf.scale * 100)}%</span></label>
             <input id="vscale" type="range" min="0.2" max="3" step="0.01" value={curXf.scale} disabled={!hasVideo}
               onChange={e => setCurXf({ ...curXf, scale: parseFloat(e.target.value) })} />
+          </div>
+          <div className="field">
+            <label htmlFor="vrot">회전 (수평 맞추기) <span className="mono dim">{(curXf.rot || 0).toFixed(1)}°</span></label>
+            <div className="row tight rot-row">
+              <button type="button" className="btn ghost sm" disabled={!hasVideo} aria-label="왼쪽으로 0.1도" onClick={() => setCurXf({ ...curXf, rot: Math.round(((curXf.rot || 0) - 0.1) * 10) / 10 })}>−</button>
+              <input id="vrot" type="range" min="-20" max="20" step="0.1" value={curXf.rot || 0} disabled={!hasVideo}
+                onFocus={() => setLevelGrid(true)} onBlur={() => setLevelGrid(false)} onDoubleClick={() => setCurXf({ ...curXf, rot: 0 })}
+                onChange={e => setCurXf({ ...curXf, rot: Math.abs(parseFloat(e.target.value)) < 0.05 ? 0 : parseFloat(e.target.value) })} />
+              <button type="button" className="btn ghost sm" disabled={!hasVideo} aria-label="오른쪽으로 0.1도" onClick={() => setCurXf({ ...curXf, rot: Math.round(((curXf.rot || 0) + 0.1) * 10) / 10 })}>+</button>
+            </div>
+            <label className="row tight small dim" htmlFor="vrot-fill">
+              <input id="vrot-fill" type="checkbox" checked={curXf.rotFill !== false} disabled={!hasVideo} onChange={e => setCurXf({ ...curXf, rotFill: e.target.checked })} />
+              돌려서 생긴 빈 모서리가 안 보이게 자동 확대
+            </label>
           </div>
           <div className="row">
             <button type="button" className={`btn sm ${cropMode ? 'accent' : ''}`} disabled={!hasVideo} onClick={() => setCropMode(m => !m)}>{cropMode ? '자르기 완료' : '자르기'}</button>
@@ -1989,7 +2005,11 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
           onClips={list => setProject({ clips: list, skips: [], trims: { ...(projRef.current.trims || {}), main: undefined as any } })}
           onCycle={c => setProject({ cycle: c || undefined })}
           onTrim={(id, tr) => setProject({ trims: { ...(projRef.current.trims || {}), [id]: tr } })}
-          onRecFade={(key, f) => setProject({ recFades: { ...(projRef.current.recFades || {}), [key]: f } })}
+          onFade={(key, f) => {
+            const p = projRef.current;
+            if (key.startsWith('clip:')) setProject({ clips: clipsOf(p, masterDur()).map(c => c.id === key.slice(5) ? { ...c, fadeIn: f.in, fadeOut: f.out } : c), skips: [] });
+            else setProject({ recFades: { ...(p.recFades || {}), [key]: f } });
+          }}
           selFx={selFx} onSelectFx={sf => { setSelFx(sf); if (sf) setRightTab('fx'); }} onFxItems={patch => setFx(patch)} onAddPunch={(t: number) => addPunchAt(t)}
           onSelectClip={c => {
             setSelClipSrc(c ? c.src || MAIN : null);

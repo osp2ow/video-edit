@@ -2,7 +2,7 @@
 // 영상들은 이 시계를 따라감 — 지금 T에 놓인 조각의 영상 파일(<video>)을 그 조각의 영상 시간으로 맞추고,
 // 조금 어긋나면 재생 속도를 살짝 바꿔서, 많이 어긋나면 위치를 옮겨서 맞춘다. 조각 사이 빈자리는 검은 화면.
 // 앵글은 첫 영상(MAIN)에 붙어 있어서 그 영상이 움직이면 같이 따라감 (followMaster).
-import { Project, Clip, clipsOf, clipEnd, MAIN } from './model';
+import { Project, Clip, clipsOf, clipEnd, MAIN, clipFadeAt } from './model';
 import { Player } from './player';
 
 export class Transport {
@@ -131,6 +131,8 @@ export class Transport {
     this.cur = c;
     if (c && el) {
       const s = c.srcIn + (t - c.start);
+      // 영상 조각 페이드: 그 영상 소리도 같이 작게
+      if (!p.videoMuted) { const vol = Math.max(0, Math.min(1, p.videoVol * clipFadeAt(c, t))); if (Math.abs(el.volume - vol) > 0.004) el.volume = vol; }
       if (el.paused || el.ended) {
         if (Math.abs(el.currentTime - s) > 0.04) this.jump(el, s);
         el.playbackRate = 1;

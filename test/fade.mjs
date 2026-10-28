@@ -11,6 +11,7 @@ const page = await browser.newPage();
 page.on('pageerror', e => console.log('PAGEERROR', e.message));
 await page.goto('file://' + dir + '/t.html');
 const r = await page.evaluate(async () => {
+  let r_vid;
   const sr = 48000, mk = (sec) => { const b = new AudioBuffer({ length: sec * sr, sampleRate: sr, numberOfChannels: 2 }); for (let c = 0; c < 2; c++) b.getChannelData(c).fill(0.5); return b; };
   const p = T.defaultProject();
   // 첫 녹음본: 타임라인 0~10초, 페이드 인 2초 · 아웃 1초 / 추가 녹음본: 12초부터 4초 길이 (파일 1~5초만 사용), 페이드 인 1초
@@ -24,7 +25,13 @@ const r = await page.evaluate(async () => {
   // 중간에서 시작한 추출 (페이드 인 도중부터)
   const out2 = await T.mixAudio(inp, 1, 3);
   const d2 = out2.getChannelData(0), at2 = t => +(d2[Math.round(t * sr)] / 0.5).toFixed(3);
-  return { a: [0.5, 1, 1.5, 2.5, 5, 9.25, 9.5, 9.75, 10.5], v: [0.5, 1, 1.5, 2.5, 5, 9.25, 9.5, 9.75, 10.5].map(at), b: [12.25, 12.5, 13, 14, 15.9].map(at), mid: [0.1, 0.5, 1, 1.5].map(at2) };
+  // 영상 조각 페이드: 영상 소리(상수) 0~6초 조각, 페이드 인 2초 · 아웃 2초 (녹음본은 끔)
+  const q = T.defaultProject(); q.recMuted = true;
+  q.clips = [{ id: 'c1', start: 0, srcIn: 0, srcOut: 6, fadeIn: 2, fadeOut: 2 }];
+  const inp2 = { ...inp, project: q, master: { duration: 6 }, masterAudio: mk(6) };
+  const out3 = await T.mixAudio(inp2, 0, 6), d3 = out3.getChannelData(0), at3 = t => +(d3[Math.round(t * sr)] / 0.5).toFixed(3);
+  r_vid = [0.5, 1, 3, 4.5, 5, 5.5].map(at3);
+  return { a: [0.5, 1, 1.5, 2.5, 5, 9.25, 9.5, 9.75, 10.5], v: [0.5, 1, 1.5, 2.5, 5, 9.25, 9.5, 9.75, 10.5].map(at), b: [12.25, 12.5, 13, 14, 15.9].map(at), mid: [0.1, 0.5, 1, 1.5].map(at2), vid: r_vid };
 });
 console.log(JSON.stringify(r));
 const near = (x, y) => Math.abs(x - y) < 0.02;
@@ -33,4 +40,5 @@ ok('rec fade in', near(r.v[0], 0.25) && near(r.v[1], 0.5) && near(r.v[2], 0.75) 
 ok('rec fade out', near(r.v[5], 0.75) && near(r.v[6], 0.5) && near(r.v[7], 0.25) && near(r.v[8], 0));
 ok('extra rec fade in (starts 12s)', near(r.b[0], 0.25) && near(r.b[1], 0.5) && near(r.b[2], 1) && near(r.b[3], 1));
 ok('export starting mid-fade', near(r.mid[0], 0.55) && near(r.mid[1], 0.75) && near(r.mid[2], 1));
+ok('video clip fade in/out', near(r.vid[0], 0.25) && near(r.vid[1], 0.5) && near(r.vid[2], 1) && near(r.vid[3], 0.75) && near(r.vid[4], 0.5) && near(r.vid[5], 0.25));
 await browser.close();

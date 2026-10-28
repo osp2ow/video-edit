@@ -2,7 +2,7 @@
 // 순서: 영상(전환·분할·박자 효과) → 비네트 → 악보 카드 → 자막 → 로고 → 플래시 → 인트로/엔딩 카드 → 페이드
 import { colorFilterFor, joinFilter } from './colormatch';
 import { retouchFaces } from './face';
-import { CardLayout, Project, Fx, ColorFilter, TransType, MAIN, getFx, getXf, angleAt, barLen, beatLen, LAYOUT_LABEL, cardSpan, ratioOfWH, cardAlpha, srcAt, CardStyle, cardStyleOf, NEUTRAL_FILTER, sheetClipAt, cardPageAt, FIRST_PAGE } from './model';
+import { CardLayout, Project, Fx, ColorFilter, TransType, MAIN, getFx, getXf, angleAt, barLen, beatLen, LAYOUT_LABEL, cardSpan, ratioOfWH, cardAlpha, srcAt, CardStyle, cardStyleOf, NEUTRAL_FILTER, sheetClipAt, cardPageAt, FIRST_PAGE, clipFadeAt, Clip, clipsOf, clipEnd } from './model';
 import { SheetData } from './sheet';
 import { Angle } from './angles';
 import { drawVideo, drawCard, drawCaptions, FONT, safeZones } from './render';
@@ -15,6 +15,7 @@ export interface Env {
   layout: CardLayout;
   range: [number, number]; // 시작·끝 효과의 기준 구간
   frames?: Map<string, HTMLVideoElement | null>;   // 추출용: 파일에서 직접 풀어낸 장면 (있으면 <video> 대신). 추가 영상은 'src:'+id
+  framesFrom?: Map<string, HTMLVideoElement | null>;   // 추출용: 영상 조각 사이 장면 전환 중 '앞 조각' 장면
   sources?: Map<string, HTMLVideoElement>;         // 추가로 올린 영상들 (조각의 src → <video>)
   sheets?: Map<string, SheetData>;                 // 두 번째부터 넣은 악보들 (악보 조각의 sheet 이름 → 악보)
 }
@@ -182,6 +183,25 @@ function buf(i: number, W: number, H: number) {
   return c.getContext('2d')!;
 }
 
+/** 영상 조각이 바뀌는 곳(앞 조각 끝 = 뒤 조각 시작)의 장면 전환 — 효과 탭의 장면 전환 설정을 씀.
+ *  전환 동안 앞 조각은 끝 장면에서, 뒤 조각은 첫 장면에서 멈춘 채로 섞임 */
+export function clipTransitionAt(p: Project, t: number, dur: number): { type: TransType; k: number; A: Clip; B: Clip; tA: number; tB: number } | null {
+  const fx = getFx(p);
+  if (fx.trType === 'cut' || !(fx.trDur > 0)) return null;
+  const cs = clipsOf(p, dur);
+  if (cs.length < 2) return null;
+  for (const B of cs) {
+    const A = cs.find(x => x !== B && Math.abs(clipEnd(x) - B.start) < 0.05 && x.start < B.start);
+    if (!A) continue;
+    const d = Math.min(fx.trDur, (clipEnd(A) - A.start), (clipEnd(B) - B.start));
+    if (t >= B.start - d / 2 && t < B.start + d / 2) {
+      const eps = 1 / 60;
+      return { type: fx.trType, k: (t - (B.start - d / 2)) / d, A, B, tA: Math.min(t, clipEnd(A) - eps), tB: Math.max(t, B.start + eps) };
+    }
+  }
+  return null;
+}
+
 /** 지금 시점의 전환 (없으면 null) */
 export function transitionAt(p: Project, t: number) {
   const fx = getFx(p);
@@ -198,11 +218,25 @@ export function transitionAt(p: Project, t: number) {
 
 function drawProgram(ctx: CanvasRenderingContext2D, W: number, H: number, t: number, env: Env) {
   const tr = transitionAt(env.project, t);
-  if (!tr) { drawSource(ctx, W, H, angleAt(env.project.cuts, t), t, env); return; }
+  if (!tr) {
+    // 영상 조각 사이 장면 전환
+    const ct = clipTransitionAt(env.project, t, env.master.duration || 0);
+    if (!ct) { drawSource(ctx, W, H, angleAt(env.project.cuts, t), t, env); return; }
+    const a = buf(0, W, H), b = buf(1, W, H);
+    drawSource(a, W, H, angleAt(env.project.cuts, ct.tA), ct.tA, env.framesFrom ? { ...env, frames: env.framesFrom } : env);
+    drawSource(b, W, H, angleAt(env.project.cuts, ct.tB), ct.tB, env);
+    blendTransition(ctx, W, H, a.canvas, b.canvas, ct.type, ct.k);
+    return;
+  }
   const a = buf(0, W, H), b = buf(1, W, H);
   drawSource(a, W, H, tr.from, t, env);
   drawSource(b, W, H, tr.to, t, env);
-  const A = a.canvas, B = b.canvas, k = tr.k, e = ease(k);
+  blendTransition(ctx, W, H, a.canvas, b.canvas, tr.type, tr.k);
+}
+
+/** 두 장면 섞기 (장면 전환 종류별) */
+function blendTransition(ctx: CanvasRenderingContext2D, W: number, H: number, A: HTMLCanvasElement, B: HTMLCanvasElement, type: TransType, k: number) {
+  const e = ease(k), tr = { type };
   ctx.save();
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
   switch (tr.type) {
@@ -354,6 +388,13 @@ export function activeTitleCard(ctx: CanvasRenderingContext2D, W: number, H: num
   return null;
 }
 
+/** 영상 조각 페이드: 조각 앞뒤에서 화면이 검게 (자막·악보 카드는 그대로) */
+function drawClipFade(ctx: CanvasRenderingContext2D, W: number, H: number, t: number, env: Env) {
+  const m0 = srcAt(env.project, t, env.master.duration || 0);
+  const k = m0 ? clipFadeAt(m0.clip, t) : 1;
+  if (k < 1) { ctx.fillStyle = `rgba(0,0,0,${1 - k})`; ctx.fillRect(0, 0, W, H); }
+}
+
 /** 결과물 한 프레임 */
 export function renderComposite(ctx: CanvasRenderingContext2D, W: number, H: number, t: number, env: Env, opts: { viewTrack?: string | null; beforeCard?: () => void; ghostCard?: boolean; preview?: boolean } = {}) {
   const p = env.project, fx = getFx(p);
@@ -364,6 +405,7 @@ export function renderComposite(ctx: CanvasRenderingContext2D, W: number, H: num
   if (opts.viewTrack) {
     drawSource(ctx, W, H, opts.viewTrack, t, env);
     retouchFaces(ctx, W, H, fx.face);
+    if (opts.viewTrack === MAIN) drawClipFade(ctx, W, H, t, env);
   } else {
     const m = beatMods(p, fx, t);
     // 서서히 확대: 구간 안에서 시작 배율 → 끝 배율 (예전 전체 설정도 지원)
@@ -378,6 +420,7 @@ export function renderComposite(ctx: CanvasRenderingContext2D, W: number, H: num
       ctx.restore();
     } else drawProgram(ctx, W, H, t, env);
     retouchFaces(ctx, W, H, fx.face);   // 얼굴 보정 (자막·악보는 영향 없음)
+    drawClipFade(ctx, W, H, t, env);   // 영상 조각 페이드
     // 2) 비네트
     if (fx.vignette > 0 && fx.filterOn !== false) {
       const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) / 2);

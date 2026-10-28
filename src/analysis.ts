@@ -209,6 +209,17 @@ export function localPeaks(e: Float32Array): Float32Array {
   }
   return out;
 }
+/** 소리의 [t0, t1) 구간만 보고 템포 찾기 (악보마다 템포가 다를 때 그 악보 구간만) */
+export function estimateTempoRange(tr: Track, t0: number, t1: number, opt: TempoOpts = {}): TempoResult | null {
+  const f0 = Math.max(0, Math.floor(t0 / HOP_SEC)), f1 = Math.min(tr.env.length, Math.ceil(t1 / HOP_SEC));
+  if (f1 - f0 < Math.round(4 / HOP_SEC)) return null;   // 4초도 안 되면 못 찾음
+  const a = f0 * HOP_SEC, b = f1 * HOP_SEC;
+  return estimateTempo(tr.env.subarray(f0, f1), {
+    ...opt, onsets: tr.onsets.filter(o => o.t >= a && o.t < b).map(o => ({ ...o, t: o.t - a })),
+    low: tr.low.subarray(f0, f1), mid: tr.mid.subarray(f0, f1),
+  });
+}
+
 export function estimateTempo(env: Float32Array, opt: TempoOpts = {}): TempoResult {
   const n = env.length, dur = n * HOP_SEC;
   let mean = 0;

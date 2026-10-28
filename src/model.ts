@@ -93,6 +93,23 @@ export const mainShift = (p: Project, dur: number) => { const c = clipsOf(p, dur
 /** 녹음본이 타임라인에서 시작하는 시각 (녹음본 시간 = 타임라인 − recAt). 예전 프로젝트는 첫 영상에 붙어 있던 값으로 */
 export const recAtOf = (p: Project, dur: number) => typeof p.recAt === 'number' ? p.recAt : mainShift(p, dur) - p.recOffset;
 export interface Trim { in: number; out: number }
+/** 녹음본 조각의 페이드 (초): 조각 앞에서 서서히 커지고(in) 끝에서 서서히 작아짐(out) */
+export interface Fade { in: number; out: number }
+/** 이 녹음본 조각의 페이드 (조각 길이 len보다 길면 비율대로 줄임) */
+export function fadeOf(p: Project, key: string, len: number): Fade {
+  const f = p.recFades?.[key];
+  let a = Math.max(0, f?.in || 0), b = Math.max(0, f?.out || 0);
+  if (a + b > len && a + b > 0) { const k = Math.max(0, len) / (a + b); a *= k; b *= k; }
+  return { in: a, out: b };
+}
+/** 소리 크기 예약: 타임라인 [TS, TE] 조각에 페이드를 걸고, from(타임라인)부터 재생할 때의 볼륨 곡선을 넣음.
+ *  ct = 타임라인 시간 → 소리 장치 시간 */
+export function scheduleFade(param: AudioParam, ct: (t: number) => number, TS: number, TE: number, f: Fade, from: number, vol = 1) {
+  const g = (t: number) => vol * Math.max(0, Math.min(1, f.in > 0 ? (t - TS) / f.in : 1, f.out > 0 ? (TE - t) / f.out : 1));
+  param.setValueAtTime(g(from), Math.max(0, ct(from)));
+  if (!f.in && !f.out) return;
+  for (const t of [TS + f.in, TE - f.out, TE].sort((a, b) => a - b)) if (t > from + 1e-4) param.linearRampToValueAtTime(g(t), Math.max(0, ct(t)));
+}
 /** 추가 녹음본 하나: src = 파일 이름, at = 그 녹음본 0초가 오는 타임라인 시각 */
 export interface RecClip { src: string; at: number; id?: string }   // id: 잘라서 생긴 조각 (src = MAIN_REC면 첫 녹음본의 조각)
 export const recKey = (src: string) => 'recx:' + src;
@@ -304,6 +321,7 @@ export interface Project {
   clips?: Clip[];         // 기준 영상 조각들 (타임라인 위치 · 그 영상의 쓰는 부분). 녹음본·앵글은 영상에 붙어서 같이 움직임
   cycle?: { start: number; end: number; on: boolean };   // 구간 반복 (추출도 이 구간)
   sheetShift?: number;    // (예전 방식) 쓰지 않음
+  recFades?: Record<string, Fade>;   // 녹음본 조각별 페이드 인·아웃 (키는 trims와 같음: 'rec' · 'recx:…')
   trims?: Record<string, Trim>;   // 트랙별 쓰는 부분 (그 파일의 시간, 초) — 'main'·앵글 id·'rec'
   captionStyles: Record<Ratio, CaptionStyle>;
   pip?: Partial<Record<Ratio, PipPos>>;   // PIP 작은 화면 위치·크기 (화면 비율별, 없으면 기본 자리)

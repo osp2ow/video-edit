@@ -4,11 +4,12 @@ import { CaptionStudio } from './CaptionStudio';
 import { Angle, ANGLE_COLORS, makeAngleVideo, followMaster, activeSource } from './angles';
 import { fixEditList } from './movfix';
 import { decodeVideoAudio } from './audiofile';
+import { estimateTempoRange } from './analysis';
 import { Track, decodeMono, analyzeTrack, estimateTempo, syncOffset, firstStrongBeat, downbeatShift, refinePhase, kickGrid } from './analysis';
 import { SheetData, fileToPages, detectSheet, leadingRests, stitchImages } from './sheet';
 import { Player } from './player';
 import { Preview } from './Preview';
-import { Timeline } from './Timeline';
+import { Timeline, BpmBox } from './Timeline';
 import { ExportDialog } from './ExportDialog';
 import { ThumbDialog } from './ThumbDialog';
 import { Transport } from './transport';
@@ -180,6 +181,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const [cropMode, setCropMode] = useState(false);
   // 타임라인에서 고른 트랙: 'program'(결과물) | 'main' | 앵글 id | 'rec'
   const [selTrack, setSelTrack] = useState('program');
+  const [selClipSrc, setSelClipSrc] = useState<string | null>(null);   // 타임라인에서 고른 영상 조각의 파일 (MAIN = 첫 영상)
   const [inOut, setInOut] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
   const [selCaption, setSelCaption] = useState<string | null>(null);
   const [studioOpen, setStudioOpen] = useState(false);
@@ -271,7 +273,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   }, []);
 
   useEffect(() => { playerRef.current?.applyRecGain(); playerRef.current?.applyVideoMix([...elsMap().values()]); }, [project.videoMuted, project.videoVol, project.recMuted, project.recVol, sources.length]);
-  useEffect(() => { playerRef.current?.restart(); }, [project.recAt, project.recOffset, project.trims?.rec?.in, project.trims?.rec?.out, JSON.stringify(project.recClips || []),
+  useEffect(() => { playerRef.current?.restart(); }, [project.recAt, project.recOffset, project.trims?.rec?.in, project.trims?.rec?.out, JSON.stringify(project.recClips || []), JSON.stringify(project.recFades || {}),
     (project.recClips || []).map(c => { const t = project.trims?.[recKeyOf(c)]; return t ? t.in + ':' + t.out : ''; }).join('|')]);
   // 예전 프로젝트: 녹음본이 첫 영상에 붙어 있던 위치를 타임라인 위치로 고정 (이제 녹음본이 기준)
   useEffect(() => {
@@ -514,7 +516,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
       const start = list.length ? Math.max(...list.map(c => sheetClipEnd(p, c))) : sheetHome(p);
       const clip: SheetClip = { id: 'k' + Date.now().toString(36), start: Math.round(start * 1000) / 1000, barIn: 0, barOut: s.bars.length, sheet: s.name };
       setProject({ sheetClips: [...list, clip] });
-      setMsg({ kind: 'ok', text: `${file.name}: ${s.bars.length}마디를 앞 악보 뒤에 붙였어요. 템포가 다르면 타임라인에서 그 악보를 누르고 BPM을 넣어주세요.` });
+      setMsg({ kind: 'ok', text: `${file.name}: ${s.bars.length}마디를 앞 악보 뒤에 붙였어요. 템포가 다르면 왼쪽 악보 목록의 '이 악보부터' 칸에 BPM을 넣거나 '소리로 찾기'를 눌러 주세요.` });
     } catch (e: any) { setMsg({ kind: 'warn', text: e?.message || '악보를 읽지 못했어요.' }); }
   };
   const removeSheet = (name: string) => {
@@ -541,8 +543,33 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     const keyOf = (x: SheetClip) => x.sheet && x.sheet !== sheet?.name ? x.sheet : '';
     const key = keyOf(c), first = Math.min(...list.filter(x => keyOf(x) === key).map(x => x.start));
     // 뒤에 오는 다른 악보는 지금 템포를 그대로 유지 (이 악보의 템포가 뒤로 번지지 않게)
-    setProject({ sheetClips: list.map(x => keyOf(x) === key ? { ...x, bpm } : (!x.bpm && x.start > first + 1e-3) ? { ...x, bpm: Math.round(bpmAt(p, x.start + 1e-3) * 100) / 100 } : x) });
+    let next = list.map(x => keyOf(x) === key ? { ...x, bpm } : (!x.bpm && x.start > first + 1e-3) ? { ...x, bpm: Math.round(bpmAt(p, x.start + 1e-3) * 100) / 100 } : x);
+    // 이어 붙어 있던 뒤 악보들은 이 악보 길이가 바뀐 만큼 같이 밀거나 당김 (사이가 벌어지거나 겹치지 않게)
+    const order = [...list].sort((a, b) => a.start - b.start);
+    for (let i = 1; i < order.length; i++) {
+      const prevOld = order[i - 1];
+      if (Math.abs(order[i].start - sheetClipEnd(p, prevOld)) > 0.02) continue;
+      const pp = { ...p, sheetClips: next }, prevNew = next.find(x => x.id === prevOld.id)!;
+      const ns = Math.round(sheetClipEnd(pp, prevNew) * 1000) / 1000;
+      next = next.map(x => x.id === order[i].id ? { ...x, start: ns } : x);
+    }
+    setProject({ sheetClips: next });
     setMsg({ kind: 'ok', text: bpm ? `이 악보부터 ${bpm} BPM으로 맞췄어요.` : '이 악보의 템포를 앞 템포 그대로로 되돌렸어요.' });
+  };
+
+  /** 녹음본(없으면 영상 소리)에서 그 악보 구간의 템포를 찾아 넣기 */
+  const findSheetTempo = (clipId: string) => {
+    const p = projRef.current, list = sheetClipsOf(p, sheet?.bars.length || 0), c = list.find(x => x.id === clipId);
+    if (!c) return;
+    const tr = rTrack || vTrack;
+    if (!tr) { setMsg({ kind: 'info', text: '녹음본이나 영상 소리가 있어야 템포를 찾을 수 있어요.' }); return; }
+    const shift = rTrack ? recAtOf(p, masterDur()) : mainShift(p, masterDur());   // 타임라인 = 소리 시간 + shift
+    const nextStart = Math.min(...list.filter(x => x.start > c.start + 0.05).map(x => x.start), shift + tr.duration);
+    const r = estimateTempoRange(tr, c.start - shift, nextStart - shift, { bpb: p.beatsPerBar, sheetBars: c.barOut - c.barIn });
+    if (!r) { setMsg({ kind: 'warn', text: '이 악보 구간의 소리가 너무 짧아서 템포를 찾지 못했어요. 직접 넣어 주세요.' }); return; }
+    const bpm = Math.round(r.suggested * 10) / 10;
+    setSheetBpm(clipId, bpm);
+    setMsg({ kind: 'ok', text: `${rTrack ? '녹음본' : '영상 소리'}에서 이 악보 구간을 들어보니 ${bpm} BPM 같아요. 다르면 숫자를 고쳐 주세요.` });
   };
 
   // ---------- 멀티 앵글 ----------
@@ -1250,9 +1277,12 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
 
   // 지금 보이는 앵글의 영상 배치
   const viewTrack = selTrack === 'main' || angles.some(a => a.id === selTrack) ? selTrack : null; // 미리보기에서 단독으로 볼 영상
-  const curSrcId = viewTrack || (hasVideo ? activeSource(videoRef.current!, angles, project, now).id : MAIN);
+  // 크기·자르기를 맞출 영상: 영상 줄에서 조각을 골랐으면 그 조각의 영상 (이어 붙인 영상마다 따로), 앵글을 골랐으면 그 앵글, 아니면 지금 화면의 영상
+  const pickedSrc = selTrack === 'main' && selClipSrc && sources.some(x => x.id === selClipSrc) ? selClipSrc : null;
+  const curSrcId = pickedSrc || viewTrack || (hasVideo ? activeSource(videoRef.current!, angles, project, now, srcMap).id : MAIN);
   const curXf = getXf(project, ratio, curSrcId);
   const curNum = curSrcId === MAIN ? 1 : angles.findIndex(a => a.id === curSrcId) + 2;
+  const curSrcName = sources.find(x => x.id === curSrcId)?.name;
   const setCurXf = (xf: VideoXf) => setProject({ frames: withXf(projRef.current, ratio, curSrcId, xf) });
 
   // ---------- 효과 ----------
@@ -1574,8 +1604,14 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
                   <div key={x.name} className="src-item">
                     <span className="src-num">악보 {i + 2}</span>
                     <span className="src-name" title={x.name}>{x.name}</span>
-                    <span className="dim small">{x.bars.length}마디{c?.bpm ? ` · ${Math.round(c.bpm * 10) / 10} BPM` : ''}</span>
+                    <span className="dim small">{x.bars.length}마디</span>
                     <button type="button" className="link small danger" onClick={() => removeSheet(x.name)}>빼기</button>
+                    {c && (
+                      <div className="src-bpm">
+                        <BpmBox id={`sheet-bpm-${i + 2}`} label="이 악보부터" bpm={c.bpm} base={bpmAt(project, c.start - 1e-3)} onBpm={b => setSheetBpm(c.id, b)} />
+                        <button type="button" className="btn ghost sm" onClick={() => findSheetTempo(c.id)} disabled={!rTrack && !vTrack} title="녹음본에서 이 악보 구간의 소리를 듣고 템포를 찾아 넣어요">소리로 찾기</button>
+                      </div>
+                    )}
                   </div>
                 );
               })}
@@ -1586,7 +1622,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
               <input id="f-sheet2" type="file" accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*"
                 onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) addSheet(f); }} />
               <span className="slot-label">악보 추가</span>
-              <span className="slot-name">앞 악보 뒤에 이어 붙여요 · 템포가 다르면 타임라인에서 BPM 입력</span>
+              <span className="slot-name">앞 악보 뒤에 이어 붙여요 · 템포가 다르면 아래 목록에서 BPM 입력</span>
               <span className="slot-act">열기</span>
             </label>
           )}
@@ -1791,7 +1827,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
         </section>
 
         <section>
-          <h2>영상 화면 <span className="dim small">{curNum}번 앵글</span></h2>
+          <h2>영상 화면 <span className="dim small">{curSrcName ? curSrcName.replace(/\.[^.]+$/, '') : sources.length && curSrcId === MAIN ? `${(videoName || '첫 영상').replace(/\.[^.]+$/, '')}` : `${curNum}번 앵글`}</span></h2>
           <div className="field">
             <label htmlFor="vscale">크기 <span className="mono dim">{Math.round(curXf.scale * 100)}%</span></label>
             <input id="vscale" type="range" min="0.2" max="3" step="0.01" value={curXf.scale} disabled={!hasVideo}
@@ -1953,7 +1989,13 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
           onClips={list => setProject({ clips: list, skips: [], trims: { ...(projRef.current.trims || {}), main: undefined as any } })}
           onCycle={c => setProject({ cycle: c || undefined })}
           onTrim={(id, tr) => setProject({ trims: { ...(projRef.current.trims || {}), [id]: tr } })}
+          onRecFade={(key, f) => setProject({ recFades: { ...(projRef.current.recFades || {}), [key]: f } })}
           selFx={selFx} onSelectFx={sf => { setSelFx(sf); if (sf) setRightTab('fx'); }} onFxItems={patch => setFx(patch)} onAddPunch={(t: number) => addPunchAt(t)}
+          onSelectClip={c => {
+            setSelClipSrc(c ? c.src || MAIN : null);
+            // 고른 조각이 지금 화면에 보이도록 재생 위치를 그 조각 안으로 (멈춰 있을 때만)
+            if (c && !transportRef.current?.playing) { const t = tnow(); if (t < c.start || t >= clipEnd(c)) seek(c.start + 0.01); }
+          }}
           selected={selTrack} onSelect={setSelTrack} inOut={inOut} selCut={selCut} onSelectCut={i => { setSelCut(i); if (i !== null) setRightTab('fx'); }}
           selCaption={selCaption} onCaptions={setCaptions} onSelectCaption={setSelCaption} onEditCaption={editCaption}
           angleTracks={angles.map((a, i) => ({ id: a.id, num: i + 2, color: ANGLE_COLORS[(i + 1) % ANGLE_COLORS.length], track: a.track, offset: project.angleOffsets[a.id] || 0 }))} onCuts={(c: Cut[]) => setProject({ cuts: c })} onGroup={patch => setProject(patch)} sheetNames={sheetNames} nBarsOf={nBarsOf} onSheetBpm={setSheetBpm} recName={recName} recExtras={(project.recClips || []).flatMap(c => {

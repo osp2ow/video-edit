@@ -470,3 +470,6 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .outro-pages { display: grid; gap: 8px; }
 .outro-page { display: grid; gap: 6px; padding: 8px; border: 1px dashed var(--line); border-radius: 8px; }
 .outro-page.off { opacity: 0.55; }
+.tl-fade { display: inline-flex; gap: 6px; align-items: center; }
+.src-item:has(.src-bpm) { flex-wrap: wrap; }
+.src-bpm { flex-basis: 100%; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }

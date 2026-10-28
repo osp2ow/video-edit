@@ -8,7 +8,7 @@ import { renderComposite } from './effects';
 import { openFrameSource, FrameSource } from './decoder';
 import { MAIN } from './model';
 import { preloadCaptionFonts } from './render';
-import { getFx, trimOf, clipsOf, clipEnd, Clip, recAtOf, recKeyOf, MAIN_REC } from './model';
+import { getFx, trimOf, clipsOf, clipEnd, Clip, recAtOf, recKeyOf, MAIN_REC, fadeOf, scheduleFade } from './model';
 
 // TS 기본 타입에 아직 없는 WebCodecs 오디오 API
 declare const AudioEncoder: any;
@@ -138,7 +138,7 @@ export async function mixAudio(inp: ExportInput, start: number, end: number): Pr
   if (fx.audioFade && fx.fadeOut > 0) { const a = Math.max(0, dur - fx.fadeOut); master.gain.setValueAtTime(1, a); master.gain.linearRampToValueAtTime(0, dur); }
   // 영상 조각마다 그 영상의 소리 (빈자리는 조용히) + 녹음본은 타임라인에 놓인 그대로 처음부터 끝까지
   const srcDur = inp.master.duration || 0;
-  const placeAt = (buf: AudioBuffer, outAt: number, srcFrom: number, len: number, vol: number, tin = 0, tout = buf.duration) => {
+  const placeAt = (buf: AudioBuffer, outAt: number, srcFrom: number, len: number, vol: number, tin = 0, tout = buf.duration, fade?: { key: string; at: number }) => {
     const from = Math.max(srcFrom, tin, 0), to = Math.min(srcFrom + len, tout, buf.duration);
     if (to - from <= 0.001) return;
     const s = ctx.createBufferSource(); s.buffer = buf;
@@ -147,7 +147,12 @@ export async function mixAudio(inp: ExportInput, start: number, end: number): Pr
     const at = outAt + (from - srcFrom), d = to - from;
     g.gain.setValueAtTime(0, at); g.gain.linearRampToValueAtTime(vol, at + Math.min(0.005, d / 2));
     g.gain.setValueAtTime(vol, at + Math.max(0, d - 0.005)); g.gain.linearRampToValueAtTime(0, at + d);
-    s.connect(g); g.connect(master);
+    if (fade) {
+      // 녹음본 조각 페이드 (타임라인 시간 → 추출 시간 = 타임라인 − start)
+      const fg = ctx.createGain(), TS = fade.at + tin, TE = fade.at + tout;
+      scheduleFade(fg.gain, t => t - start, TS, TE, fadeOf(p, fade.key, TE - TS), Math.max(start, TS));
+      s.connect(g); g.connect(fg); fg.connect(master);
+    } else { s.connect(g); g.connect(master); }
     s.start(at, from, d);
   };
   for (const pc of piecesOf(p, srcDur, start, end)) {
@@ -158,12 +163,12 @@ export async function mixAudio(inp: ExportInput, start: number, end: number): Pr
   }
   if (inp.recAudio && !p.recMuted && p.recVol > 0) {
     const tr = trimOf(p, 'rec', inp.recAudio.duration), recAt = recAtOf(p, srcDur);
-    placeAt(inp.recAudio, 0, start - recAt, end - start, p.recVol, tr.in, tr.out);
+    placeAt(inp.recAudio, 0, start - recAt, end - start, p.recVol, tr.in, tr.out, { key: 'rec', at: recAt });
   }
   if (!p.recMuted && p.recVol > 0) for (const c of p.recClips || []) {
     const b = c.src === MAIN_REC ? inp.recAudio : inp.extraRecs?.get(c.src); if (!b) continue;
     const tr = trimOf(p, recKeyOf(c), b.duration);
-    placeAt(b, 0, start - c.at, end - start, p.recVol, tr.in, tr.out);
+    placeAt(b, 0, start - c.at, end - start, p.recVol, tr.in, tr.out, { key: recKeyOf(c), at: c.at });
   }
   const out = await ctx.startRendering();
   // 시작·끝 10ms 페이드 (딸깍 소리 방지)

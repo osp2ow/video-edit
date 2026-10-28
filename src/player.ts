@@ -1,7 +1,7 @@
 // 소리 엔진: 녹음본(WebAudio)과 미리듣기 메트로놈을 "타임라인 시계"에 맞춰 예약한다.
 // 녹음본이 기준(메인)이라 영상과 상관없이 타임라인 시간에 붙어 있고, 영상들은 이 시계를 따라간다 (transport).
 // 영상 자체 소리는 각 <video>가 내고(싱크 맞출 때 들으려고), 켜고 끄기·볼륨만 여기서 맞춘다.
-import { Project, barAt, barStart, recAtOf, recKeyOf, MAIN_REC } from './model';
+import { Project, barAt, barStart, recAtOf, recKeyOf, MAIN_REC, fadeOf, scheduleFade } from './model';
 
 export class Player {
   ctx: AudioContext | null = null;
@@ -107,7 +107,10 @@ export class Player {
       if (from >= tout) return;
       const s = ctx.createBufferSource();
       s.buffer = buf;
-      s.connect(this.recGain!);
+      // 조각마다 페이드 인·아웃 (타임라인 시간 기준)
+      const fg = ctx.createGain(), TS = recAt + tin, TE = recAt + tout;
+      scheduleFade(fg.gain, t => ctStart + (t - tStart), TS, TE, fadeOf(p, key, TE - TS), recAt + from);
+      s.connect(fg); fg.connect(this.recGain!);
       s.start(Math.max(ctx.currentTime, ctStart + (from - r0)), from, tout - from);
       this.srcs.push(s);
     };

@@ -12,6 +12,8 @@ export interface CardLayout {
   w: number;       // 카드 너비 (캔버스 너비 대비 0~1)
   opacity: number; // 카드 배경 불투명도 0.2~1
   lines: 1 | 2;    // 현재 줄만 / 현재 줄 + 다음 줄
+  cropT?: number;  // 악보 줄 위쪽 흰 여백을 자동보다 얼마나 더 자를지 (줄 그림 폭 대비, 음수면 더 보여줌)
+  cropB?: number;  // 아래쪽 흰 여백 자르기 (같은 단위)
 }
 
 export const MAIN = 'main'; // 기준 영상(앵글 1)의 id

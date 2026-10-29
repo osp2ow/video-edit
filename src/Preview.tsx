@@ -4,7 +4,7 @@ import { styleFor } from './render';
 import { SheetData } from './sheet';
 import { safeZones } from './render';
 export { safeZones };
-import { cardBox, drawVideo, drawCard, drawCaptions, FONT, videoRect, croppedRect, captionBox, captionStyleOf, activeCaptions } from './render';
+import { cardBox, drawVideo, drawCard, drawCaptions, FONT, videoRect, croppedRect, captionBox, captionStyleOf, activeCaptions, cardMetrics, sheetZoom } from './render';
 import { Angle, activeSource } from './angles';
 import { isExporting } from './exporter';
 import { renderComposite, sheetAt, activeTitleCard, cardSafeRect, clampCardY, CardLayoutResult, pipBox } from './effects';
@@ -55,7 +55,7 @@ function pickSource(p: Props) {
 
 const curSheet = (p: Props) => sheetAt(p.project, p.sheet, p.sheets, p.now());
 
-type Mode = 'move' | 'resize' | 'video' | 'cl' | 'cr' | 'ct' | 'cb' | 'cap' | 'tc' | 'tcw' | 'tcs' | 'pip' | 'pipr';
+type Mode = 'move' | 'resize' | 'video' | 'cl' | 'cr' | 'ct' | 'cb' | 'cap' | 'tc' | 'tcw' | 'tcs' | 'pip' | 'pipr' | 'sheetT' | 'sheetB';
 interface Drag {
   mode: Mode;
   sx: number; sy: number;
@@ -84,6 +84,16 @@ export function Preview(props: Props) {
     const tch = tcHit(x, y);
     if (tch) { live.current.onPause?.(); live.current.onEditCard?.(tch.kind, tch.page); return; }
     if (!capHit(x, y) && pipHit(x, y)) { live.current.onPip?.(null); return; }   // PIP 더블클릭: 기본 자리로
+    {
+      // 악보 위·아래 가장자리 더블클릭: 자동 여백으로 되돌림
+      const hm = hit(x, y);
+      if (hm === 'sheetT' || hm === 'sheetB') {
+        const p = live.current, sh = curSheet(p), l = p.layout, z = sheetZoom(sh, p.project), k = cardBox(l, W, H, sh, p.project).lineW * z;
+        if (hm === 'sheetT') { const a0 = cardMetrics(sh, l)!.above, a1 = cardMetrics(sh, { ...l, cropT: 0 })!.above; p.onLayout({ ...l, cropT: 0, y: Math.max(0, l.y - (a1 - a0) * k / H) }); }
+        else p.onLayout({ ...l, cropB: 0 });
+        return;
+      }
+    }
     const c = capHit(x, y);
     if (!c) return;
     live.current.onPause?.();
@@ -123,7 +133,7 @@ export function Preview(props: Props) {
               if (tc) drawTcOutline(ctx, w, h, tc.box, m === 'tc' || m === 'tcw' || m === 'tcs', drag.current?.mode === 'tc' ? drag.current.guides : []);
             }
             // 악보 카드는 타임라인에 악보가 있는 동안에만 (없는 곳에서는 테두리·손잡이도 숨김)
-            const cardDrag = drag.current?.mode === 'move' || drag.current?.mode === 'resize';
+            const cardDrag = drag.current?.mode === 'move' || drag.current?.mode === 'resize' || drag.current?.mode === 'sheetT' || drag.current?.mode === 'sheetB';
             if (cardDrag || cardVisible(project, sheet, t)) drawEditing(ctx, w, h, ratio, layout, sheet, showSafe, drag.current, hover.current, project);
           }
           // PIP 작은 화면: 마우스를 올리거나 옮기는 중이면 테두리·모서리 손잡이
@@ -226,11 +236,16 @@ export function Preview(props: Props) {
     const g = cardBox(p.layout, W, H, curSheet(p), p.project);
     const hr = W * 0.03;
     if (Math.hypot(x - (g.x + g.w), y - (g.y + g.h)) < hr * 1.4) return 'resize';
+    // 위·아래 가장자리: 악보 흰 여백 자르기 (악보가 있을 때만)
+    if (curSheet(p)?.bars.length && x > g.x + g.w * 0.08 && x < g.x + g.w * 0.92) {
+      if (Math.abs(y - g.y) < hr * 1.1) return 'sheetT';
+      if (Math.abs(y - (g.y + g.h)) < hr * 1.1) return 'sheetB';
+    }
     if (x >= g.x && x <= g.x + g.w && y >= g.y && y <= g.y + g.h) return 'move';
     return src ? 'video' : null;
   };
 
-  const CURSOR: Record<Mode, string> = { tc: 'move', tcw: 'ew-resize', tcs: 'nwse-resize', cap: 'move', move: 'grab', resize: 'nwse-resize', video: 'move', pip: 'move', pipr: 'nwse-resize', cl: 'ew-resize', cr: 'ew-resize', ct: 'ns-resize', cb: 'ns-resize' };
+  const CURSOR: Record<Mode, string> = { tc: 'move', tcw: 'ew-resize', tcs: 'nwse-resize', cap: 'move', move: 'grab', resize: 'nwse-resize', video: 'move', pip: 'move', pipr: 'nwse-resize', sheetT: 'ns-resize', sheetB: 'ns-resize', cl: 'ew-resize', cr: 'ew-resize', ct: 'ns-resize', cb: 'ns-resize' };
 
   const onDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const { x, y } = toCanvas(e);
@@ -335,6 +350,25 @@ export function Preview(props: Props) {
       if (d.mode === 'ct') c.t = Math.max(0, Math.min(1 - c.b - MIN, (y - full.y) / full.h));
       if (d.mode === 'cb') c.b = Math.max(0, Math.min(1 - c.t - MIN, (full.y + full.h - y) / full.h));
       p.onXf(d.id, { ...d.xf0, crop: c });
+      return;
+    }
+    if (d.mode === 'sheetT' || d.mode === 'sheetB') {
+      // 악보 위·아래 흰 여백 자르기: 위를 끌면 카드 위쪽이 손을 따라오고(악보 줄은 제자리), 아래를 끌면 카드 아래가 따라옴
+      const sh = curSheet(p), z = sheetZoom(sh, p.project), g0 = cardBox(d.start, W, H, sh, p.project);
+      const k = g0.lineW * z, lines = z > 1 ? 1 : d.start.lines, dy = y - d.sy;
+      const m0 = cardMetrics(sh, d.start)!;
+      if (d.mode === 'sheetT') {
+        const next = { ...d.start, cropT: (d.start.cropT || 0) + dy / k };
+        const m1 = cardMetrics(sh, next)!;
+        next.cropT = (d.start.cropT || 0) + (m0.above - m1.above);   // 한계(오선 · 줄 그림 끝)에 닿으면 거기서 멈춤
+        next.y = Math.max(0, d.start.y + (m0.above - m1.above) * k / H);
+        p.onLayout(next);
+      } else {
+        const next = { ...d.start, cropB: (d.start.cropB || 0) - dy / (k * lines) };
+        const m1 = cardMetrics(sh, next)!;
+        next.cropB = (d.start.cropB || 0) + (m0.below - m1.below);
+        p.onLayout(next);
+      }
       return;
     }
     const safe = safeZones(p.ratio, W, H);
@@ -470,6 +504,19 @@ function drawEditing(ctx: CanvasRenderingContext2D, W: number, H: number, ratio:
     ctx.strokeStyle = '#ffb066'; ctx.lineWidth = W * 0.003; ctx.setLineDash([W * 0.012, W * 0.008]);
     ctx.beginPath(); ctx.roundRect(g.x - 4, g.y - 4, g.w + 8, g.h + 8, g.w * 0.03); ctx.stroke();
     ctx.setLineDash([]);
+  }
+  // 악보 위·아래 여백 자르기 손잡이 (가운데 작은 막대)
+  if (sheet?.bars.length) {
+    for (const [yy, mode] of [[g.y, 'sheetT'], [g.y + g.h, 'sheetB']] as [number, Mode][]) {
+      const on = hover === mode || d?.mode === mode, bw = g.w * 0.12, bh = W * 0.011;
+      ctx.fillStyle = on ? '#ff8a1f' : 'rgba(255,255,255,0.95)'; ctx.strokeStyle = '#ff8a1f'; ctx.lineWidth = W * 0.003;
+      ctx.beginPath(); ctx.roundRect(g.x + g.w / 2 - bw / 2, yy - bh / 2, bw, bh, bh / 2); ctx.fill(); ctx.stroke();
+    }
+    if (d?.mode === 'sheetT' || d?.mode === 'sheetB' || hover === 'sheetT' || hover === 'sheetB') {
+      ctx.strokeStyle = '#ffb066'; ctx.lineWidth = W * 0.003; ctx.setLineDash([W * 0.012, W * 0.008]);
+      ctx.beginPath(); ctx.roundRect(g.x - 4, g.y - 4, g.w + 8, g.h + 8, g.w * 0.03); ctx.stroke();
+      ctx.setLineDash([]);
+    }
   }
   // 크기 조절 손잡이 (항상 보이게 — 조작 가능하다는 걸 알 수 있도록)
   const hr = W * 0.017;

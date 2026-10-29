@@ -9,12 +9,59 @@ const HL_LINE = '#ff7a12';
 export interface CardBox { x: number; y: number; w: number; h: number; pad: number; lineW: number; lineH: number; gap: number; footH: number }
 
 /** 줄마다 오선 높이를 맞추기 위한 값: 오선 위·아래로 가장 많이 튀어나온 양 (가로 폭 대비) */
+/** 줄 그림에서 오선에 이어진 잉크 범위: 오선 위·아래로 빈 띠가 오선 2칸 넘게 이어지면 거기서 멈춤
+ *  (오선 바로 위 템포·글씨는 넣고, 멀리 떨어진 제목·작곡가·쪽 번호는 뺌) — 오선 맨 윗줄 기준 px */
+const extentCache = new WeakMap<HTMLCanvasElement, { up: number; down: number }>();
+function inkExtent(s: SheetData['systems'][number]): { up: number; down: number } {
+  const cv = s.canvas, hit = extentCache.get(cv);
+  if (hit) return hit;
+  const W = cv.width, H = cv.height, sy = s.staffY ?? 0, sh = s.staffH ?? 0;
+  let res = { up: sy, down: H - sy };
+  if (sh > 4 && W > 0 && H > 0) {
+    let a = alphaCache.get(cv);
+    if (!a) { a = cv.getContext('2d')!.getImageData(0, 0, W, H).data; alphaCache.set(cv, a); }
+    const sp = sh / 4, minInk = Math.max(2, W * 0.002);
+    const ink = (y: number) => { let c = 0; for (let x = 0, k = y * W * 4 + 3; x < W; x++, k += 4) if (a![k] > 60 && ++c >= minInk) return true; return false; };
+    // 오선에서 바깥쪽으로 잉크 덩어리(빈 띠로 나뉜 행 묶음)를 차례로 봄:
+    //  - 가까운 덩어리(빈 띠 1.2칸 이하: 악센트·손 순서·높은 음표)는 계속 넣고
+    //  - 그다음 한 줄짜리 글씨(빈 띠 2.5칸 이하, 높이 3칸 이하: 템포·섹션 이름)는 하나만 넣고 멈춤 — 그 위의 제목·작곡가는 뺌
+    const reach = (from: number, dir: 1 | -1) => {
+      let edge = from, y = from + dir, gap = 0, chunkStart = -1, usedText = false;
+      const lim = dir < 0 ? -1 : H;
+      for (; y !== lim; y += dir) {
+        if (ink(y)) {
+          if (chunkStart < 0) {
+            if (gap > 2.5 * sp) break;
+            if (gap > 1.2 * sp) { if (usedText) break; usedText = true; }
+            chunkStart = y;
+          }
+          gap = 0;
+        } else {
+          if (chunkStart >= 0) {
+            // 덩어리 하나 끝: 글씨 한 줄로 넣은 덩어리가 너무 크면(악보 다른 부분) 넣지 않음
+            const hgt = Math.abs(y - chunkStart);
+            if (usedText && hgt > 3 * sp && Math.abs(chunkStart - edge) > 1.2 * sp) break;
+            edge = y - dir; chunkStart = -1;
+          }
+          gap++;
+        }
+      }
+      if (chunkStart >= 0) edge = y - dir;
+      return edge;
+    };
+    const top = reach(sy, -1), bot = reach(Math.round(sy + sh), 1);
+    res = { up: Math.min(sy, sy - top + sp * 0.6), down: Math.min(H - sy, bot - sy + sp * 0.6) };
+  }
+  extentCache.set(cv, res);
+  return res;
+}
+
 export function sheetMetrics(sheet: SheetData | null) {
   if (!sheet || !sheet.systems.length) return null;
   // 줄마다 오선 위·아래 여백 중 큰 쪽 기준 — 단, 쪽의 맨 끝 줄(아래 쪽 번호·다음 줄 조각)과 맨 첫 줄(제목)이
   // 유난히 길면 그 줄 때문에 모든 카드가 길어지지 않게 뺌 (그 줄의 넘치는 부분은 카드 안에서 잘림)
   const any = sheet as any;
-  if (any._metrics) return any._metrics as { above: number; below: number };
+  if (any._metrics) return any._metrics as { above: number; below: number; maxAbove: number; maxBelow: number; staff: number };
   const S = sheet.systems, n = S.length;
   const pick = (val: (s: typeof S[number]) => number, edge: (i: number) => boolean) => {
     const inner = S.filter((_, i) => !edge(i)).map(val);
@@ -25,8 +72,12 @@ export function sheetMetrics(sheet: SheetData | null) {
   const firstOfPage = (i: number) => i === 0 || S[i - 1].page !== S[i].page;
   const lastOfPage = (i: number) => i === n - 1 || S[i + 1].page !== S[i].page;
   any._metrics = {
-    above: pick(s => (s.staffY ?? 0) / s.canvas.width, firstOfPage),
-    below: pick(s => (s.canvas.height - (s.staffY ?? 0)) / s.canvas.width, lastOfPage),
+    above: pick(s => inkExtent(s).up / s.canvas.width, firstOfPage),
+    below: pick(s => inkExtent(s).down / s.canvas.width, lastOfPage),
+    // 직접 늘릴 수 있는 한계 (줄 그림 전체) · 오선 높이 (아래를 줄여도 오선은 남게)
+    maxAbove: Math.max(...S.map(s => (s.staffY ?? 0) / s.canvas.width)),
+    maxBelow: Math.max(...S.map(s => (s.canvas.height - (s.staffY ?? 0)) / s.canvas.width)),
+    staff: Math.max(...S.map(s => (s.staffH ?? 0) / s.canvas.width)),
   };
   return any._metrics;
 }
@@ -49,8 +100,17 @@ function barInk(sys: SheetData['systems'][number], b: SheetData['bars'][number])
   anyB._ink = { t, b: bo };
   return anyB._ink;
 }
-const sysOffset = (sheet: SheetData, s: SheetData['systems'][number], lineW: number) => {
-  const m = sheetMetrics(sheet)!;
+/** 카드에 쓸 악보 줄 위·아래 높이: 자동 값에서 카드 설정의 자르기(cropT·cropB)만큼 빼고, 오선은 남게 */
+export function cardMetrics(sheet: SheetData | null, l?: Partial<CardLayout> | null) {
+  const m = sheetMetrics(sheet);
+  if (!m) return null;
+  // 줄이는 건 오선까지, 늘리는 건 줄 그림 끝 + 오선 3개 높이까지 (그 너머는 흰 여백)
+  const above = Math.max(0.004, Math.min(Math.max(m.maxAbove, m.above) + m.staff * 3, m.above - (l?.cropT || 0)));
+  const below = Math.max(m.staff + 0.004, Math.min(Math.max(m.maxBelow, m.below) + m.staff * 3, m.below - (l?.cropB || 0)));
+  return { ...m, above, below };
+}
+const sysOffset = (sheet: SheetData, s: SheetData['systems'][number], lineW: number, l?: CardLayout) => {
+  const m = cardMetrics(sheet, l)!;
   return (m.above - (s.staffY ?? 0) / s.canvas.width) * lineW;
 };
 
@@ -127,7 +187,7 @@ export function cardBox(l: CardLayout, W: number, H: number, sheet: SheetData | 
   const w = l.w * W;
   const pad = w * 0.025;
   const lineW = w - pad * 2;
-  const m = sheetMetrics(sheet);
+  const m = cardMetrics(sheet, l);
   const lineH = lineW * (m ? m.above + m.below : 0.155) * z;
   const gap = w * 0.008;
   const footH = w * 0.085;
@@ -215,23 +275,28 @@ export function drawCard(ctx: CanvasRenderingContext2D, W: number, H: number, t:
     winX = Math.max(0, Math.min(sys.canvas.width - winW, xNow - winW * 0.4));
   }
   const sc = g.lineW / winW;
-  const oy = sysOffset(sheet, sys, g.lineW) * z;
+  const oy = sysOffset(sheet, sys, g.lineW, l) * z;
   ctx.save();
-  // 악보는 악보 칸 안에만 (유난히 긴 줄이 아래 템포·박 표시를 덮지 않게)
-  ctx.beginPath(); ctx.rect(lx - 1, g.y, g.lineW + 2, (ly - g.y) + l.lines * g.lineH + (l.lines - 1) * g.gap + g.pad * 0.3); ctx.clip();
+  // 악보는 줄마다 그 줄 칸 안에만 (잘라낸 위·아래 여백과 유난히 긴 줄이 옆 줄·템포 표시를 덮지 않게)
+  const two = l.lines === 2 && sysIdx + 1 < sheet.systems.length;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(lx - 1, ly - g.pad * 0.3, g.lineW + 2, g.lineH + g.pad * 0.3 + (two ? g.gap / 2 : g.pad * 0.3)); ctx.clip();
   ctx.drawImage(img(sys.canvas), winX, 0, winW, sys.canvas.height, lx, ly + oy, g.lineW, sys.canvas.height * sc);
-  if (l.lines === 2 && sysIdx + 1 < sheet.systems.length) {
+  ctx.restore();
+  if (two) {
     const nx = sheet.systems[sysIdx + 1];
+    ctx.save();
+    ctx.beginPath(); ctx.rect(lx - 1, ly + g.lineH + g.gap / 2, g.lineW + 2, g.lineH + g.gap / 2 + g.pad * 0.3); ctx.clip();
     ctx.globalAlpha = 0.35;
-    ctx.drawImage(img(nx.canvas), lx, ly + g.lineH + g.gap + sysOffset(sheet, nx, g.lineW), g.lineW, nx.canvas.height * (g.lineW / nx.canvas.width));
-    ctx.globalAlpha = 1;
+    ctx.drawImage(img(nx.canvas), lx, ly + g.lineH + g.gap + sysOffset(sheet, nx, g.lineW, l), g.lineW, nx.canvas.height * (g.lineW / nx.canvas.width));
+    ctx.restore();
   }
   if (hl >= 0) {
     const b = sheet.bars[hl];
     const x0 = lx + (b.x0 - winX) * sc, x1 = lx + (b.x1 - winX) * sc;
     // 네모 칸: 그 마디의 음표·기호가 실제로 그려진 높이 전체 + 여유 (음표를 가로지르지 않게)
     const ink = barInk(sys, b), pad = g.lineH * 0.07;
-    const y0 = Math.max(g.y + 2, ly + oy + ink.t * sc - pad), y1 = Math.min(g.y + g.h - g.footH * 0.4, ly + oy + ink.b * sc + pad);
+    const y0 = Math.max(g.y + 2, ly - g.pad * 0.3, ly + oy + ink.t * sc - pad), y1 = Math.min(g.y + g.h - g.footH * 0.4, ly + g.lineH + g.pad * 0.3, ly + oy + ink.b * sc + pad);
     ctx.fillStyle = HL_FILL; ctx.strokeStyle = HL_LINE; ctx.lineWidth = g.w * 0.0045;
     ctx.beginPath(); ctx.roundRect(x0, y0, x1 - x0, y1 - y0, g.w * 0.012); ctx.fill(); ctx.stroke();
     // 진행 커서: 마디 안에서 박자에 맞춰 흐르는 세로선

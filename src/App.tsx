@@ -1863,6 +1863,12 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             <label className="switch"><input id="sheet-show" type="checkbox" role="switch" checked={!fx.sheetHidden} onChange={e => setFx({ sheetHidden: !e.target.checked })} aria-label="악보를 영상에 보이기" /></label>
           </div>
           {fx.sheetHidden && <p className="note">악보가 꺼져 있어요. 미리보기와 추출 영상에 악보가 나오지 않아요.</p>}
+          {sheet && (
+            <div className="row between">
+              <span className="small dim">미리보기에서 악보 카드 위·아래 가운데 막대를 끌면 흰 여백을 자를 수 있어요</span>
+              {(layout.cropT || layout.cropB) ? <button type="button" className="link small" onClick={() => setLayout({ ...layout, cropT: 0, cropB: 0 })}>여백 처음대로</button> : null}
+            </div>
+          )}
           <div className="field">
             <label htmlFor="opacity">배경 불투명도 <span className="mono dim">{Math.round(layout.opacity * 100)}%</span></label>
             <input id="opacity" type="range" min="0.2" max="1" step="0.01" value={layout.opacity} onChange={e => setLayout({ ...layout, opacity: parseFloat(e.target.value) })} />

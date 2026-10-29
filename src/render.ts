@@ -50,7 +50,8 @@ function inkExtent(s: SheetData['systems'][number]): { up: number; down: number 
       return edge;
     };
     const top = reach(sy, -1), bot = reach(Math.round(sy + sh), 1);
-    res = { up: Math.min(sy, sy - top + sp * 0.6), down: Math.min(H - sy, bot - sy + sp * 0.6) };
+    // 위·아래 여유 1칸: 연주 위치 네모 칸이 손 순서(RL)·악센트 같은 글씨를 가리지 않고 살짝 넓게 감쌀 수 있게
+    res = { up: Math.min(sy, sy - top + sp), down: bot - sy + sp };
   }
   extentCache.set(cv, res);
   return res;
@@ -295,8 +296,9 @@ export function drawCard(ctx: CanvasRenderingContext2D, W: number, H: number, t:
     const b = sheet.bars[hl];
     const x0 = lx + (b.x0 - winX) * sc, x1 = lx + (b.x1 - winX) * sc;
     // 네모 칸: 그 마디의 음표·기호가 실제로 그려진 높이 전체 + 여유 (음표를 가로지르지 않게)
-    const ink = barInk(sys, b), pad = g.lineH * 0.07;
-    const y0 = Math.max(g.y + 2, ly - g.pad * 0.3, ly + oy + ink.t * sc - pad), y1 = Math.min(g.y + g.h - g.footH * 0.4, ly + g.lineH + g.pad * 0.3, ly + oy + ink.b * sc + pad);
+    // 여유는 오선 한 칸의 0.6배: 마디 맨 위·아래 글씨(손 순서 RL·악센트)보다 살짝 넓게 감쌈
+    const ink = barInk(sys, b), spPx = ((sys.staffH || 0) / 4) * sc, pad = Math.max(g.w * 0.006, spPx * 0.6);
+    const y0 = Math.max(g.y + 2, ly - g.pad * 0.6, ly + oy + ink.t * sc - pad), y1 = Math.min(g.y + g.h - g.footH * 0.55, ly + g.lineH + g.footH * 0.2, ly + oy + ink.b * sc + pad);
     ctx.fillStyle = HL_FILL; ctx.strokeStyle = HL_LINE; ctx.lineWidth = g.w * 0.0045;
     ctx.beginPath(); ctx.roundRect(x0, y0, x1 - x0, y1 - y0, g.w * 0.012); ctx.fill(); ctx.stroke();
     // 진행 커서: 마디 안에서 박자에 맞춰 흐르는 세로선

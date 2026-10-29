@@ -1,0 +1,21 @@
+// 연주 위치 네모 칸이 손 순서(RL) 글씨를 가리지 않는지 (악보 카드 확대 스크린샷)
+import { chromium } from 'playwright-core';
+const [HTML, V, S, OUT] = process.argv.slice(2);
+const NM = new URL('../node_modules', import.meta.url).pathname;
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: process.env.CHROME || '/opt/pw-browsers/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell' });
+const page = await browser.newPage({ viewport: { width: 1600, height: 1000 }, deviceScaleFactor: 2 });
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' }); if (u.includes('fonts.g') || u.includes('jsdelivr')) return r.abort(); return r.continue(); });
+await page.goto('file://' + HTML);
+await page.setInputFiles('#f-sheet', S); await page.waitForTimeout(1500);
+await page.setInputFiles('#f-video', V); await page.waitForFunction(() => /분석 완료|자동 감지/.test(document.querySelector('.status')?.textContent || ''), null, { timeout: 60000 });
+await page.waitForTimeout(1200);
+const pj = await page.evaluate(() => { const k = Object.keys(localStorage).find(k => k.startsWith('pve.proj:')); return JSON.parse(localStorage.getItem(k)); });
+await page.click('.tl-zoom >> text=전체 보기'); await page.waitForTimeout(200);
+const tl = await page.locator('.tl-canvas canvas').boundingBox();
+const end = await page.evaluate(() => { const [m, s] = document.querySelector('.now-t').nextElementSibling.textContent.replace('/', '').trim().split(':'); return +m * 60 + +s; });
+const X = t => tl.x + (t + end * 0.01) * ((tl.width - 2) / (end * 1.02));
+await page.mouse.click(X(pj.anchorTime + 4 * 60 / pj.bpm * 1.5), tl.y + 21); await page.waitForTimeout(600);
+const box = await page.locator('canvas.stage').boundingBox();
+await page.screenshot({ path: OUT, clip: { x: box.x, y: box.y, width: box.width, height: box.height * 0.32 } });
+await browser.close();

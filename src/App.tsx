@@ -407,7 +407,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const addRec = async (file: File, restoring = false) => {
     if (!recName && !restoring) return loadRec(file);
     const id = file.name;
-    if (id === recName || xrecRef.current.some(x => x.id === id)) { setMsg({ kind: 'info', text: `${file.name}은 이미 들어가 있어요. 다른 이름의 파일을 넣어주세요.` }); return; }
+    // 같은 이름이면 거절하지 않고 그 녹음본을 새 파일로 바꿈 (위치·줄이기·페이드는 그대로)
+    if (!restoring && id === recName) return loadRec(file);
+    if (!restoring && xrecRef.current.some(x => x.id === id)) return replaceRec(id, file);
     setMsg({ kind: 'busy', text: `${file.name} 분석 중…` });
     let tr: Track | null = null, dur = 0;
     try {
@@ -503,16 +505,18 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   };
 
   /** 악보 추가: 앞 악보가 끝나는 곳 뒤에 붙임 (템포가 다르면 타임라인에서 그 악보를 누르고 BPM 입력) */
-  const addSheet = async (file: File, restoring = false) => {
+  const addSheet = async (file: File, restoring = false): Promise<boolean | void> => {
     if (!sheet && !restoring) return loadSheet(file);
-    if (file.name === sheet?.name || extraRef.current.some(x => x.name === file.name)) { setMsg({ kind: 'info', text: `${file.name}은 이미 들어가 있어요. 다른 이름의 파일을 넣어주세요.` }); return; }
+    // 같은 이름이면 그 악보를 새 파일로 바꿈 (악보 조각 위치·템포는 그대로)
+    if (!restoring && file.name === sheet?.name) return loadSheet(file);
+    if (!restoring && extraRef.current.some(x => x.name === file.name)) return replaceSheet(file.name, file);
     setMsg({ kind: 'busy', text: `${file.name}: 악보 줄과 마디선 찾는 중…` });
     try {
       const s = detectSheet(await fileToPages(file), file.name);
       if (!s.bars.length) { setMsg({ kind: 'warn', text: `${file.name}에서 오선을 찾지 못했어요.` }); return; }
       setExtraSheets(ss => [...ss.filter(x => x.name !== s.name), s]);
       cloudUpload('sheetx:' + file.name, file);
-      if (restoring) { setMsg({ kind: 'ok', text: `${file.name}을 불러왔어요.` }); return; }
+      if (restoring) { setMsg({ kind: 'ok', text: `${file.name}을 불러왔어요.` }); return true; }
       const p = projRef.current, list = sheetClipsOf(p, sheet?.bars.length || 0);
       const start = list.length ? Math.max(...list.map(c => sheetClipEnd(p, c))) : sheetHome(p);
       const clip: SheetClip = { id: 'k' + Date.now().toString(36), start: Math.round(start * 1000) / 1000, barIn: 0, barOut: s.bars.length, sheet: s.name };
@@ -582,7 +586,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const addSource = async (file: File, restoring = false, force = false) => {
     const id = file.name;
     if (!videoName && !restoring && !force) return loadVideo(file);
-    if (id === videoName || sourcesRef.current.some(x => x.id === id)) { setMsg({ kind: 'info', text: `${file.name}은 이미 들어가 있어요.` }); return; }
+    // 같은 이름이면 그 영상을 새 파일로 바꿈 (조각 위치·자르기·페이드·크기는 그대로)
+    if (!restoring && id === videoName) return loadVideo(file, true);
+    if (!restoring && sourcesRef.current.some(x => x.id === id)) return replaceSource(id, file);
     const video = makeAngleVideo();
     video.src = URL.createObjectURL(await fixEditList(file));
     playerRef.current?.guard(video);
@@ -645,7 +651,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
 
   const loadAngle = async (file: File) => {
     let id = file.name;
-    if (anglesRef.current.some(a => a.id === id)) { setMsg({ kind: 'info', text: `${file.name}은 이미 들어가 있어요.` }); return; }
+    if (anglesRef.current.some(a => a.id === id)) return replaceAngle(id, file);   // 같은 이름: 그 앵글을 새 파일로 (싱크·전환점 그대로)
     const video = makeAngleVideo();
     video.src = URL.createObjectURL(await fixEditList(file));
     const angle: Angle = { id, name: file.name, video, track: null, confidence: null, ready: false };
@@ -688,6 +694,89 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     const r = syncOffset(vTrack, a.track, 120);
     setProject({ angleOffsets: { ...projRef.current.angleOffsets, [a.id]: r.offset } });
     updateAngle(a.id, { confidence: r.confidence });
+  };
+
+  // ---------- 추가 파일 바꾸기 (이름이 같아도, 달라도) ----------
+  // 타임라인 설정은 그대로 두고 파일만 새것으로. 이름이 바뀌면 그 이름을 쓰던 곳(조각·줄이기·싱크 등)도 새 이름으로
+  /** 클라우드 파일 목록에서 예전 이름 항목 빼기 (이름이 바뀐 경우) */
+  const dropCloudRef = (kind: 'sources' | 'recs' | 'sheets' | 'angles', id: string) => {
+    if (!cloud?.storage || !currentRef.current) return;
+    const pid = currentRef.current;
+    queue(async () => {
+      const cur = filesRef.current, r = cur[kind]?.[id];
+      if (!r) return;
+      const m = { ...(cur[kind] || {}) }; delete m[id];
+      const next = { ...cur, [kind]: m };
+      filesRef.current = next;
+      await cloud.setFiles(pid, next);
+      if (!refsOf(next).some(y => y.path === r.path) && isOrphan(r.path, pid)) await cloud.deleteFile(r.path);
+    });
+  };
+  const renameKeys = <T,>(o: Record<string, T> | undefined, a: string, b: string) => { if (!o || !(a in o)) return o; const n = { ...o }; n[b] = n[a]; delete n[a]; return n; };
+  const takenName = (name: string) => name === videoName || name === recName || name === sheet?.name || sourcesRef.current.some(x => x.id === name)
+    || xrecRef.current.some(x => x.id === name) || extraRef.current.some(x => x.name === name) || anglesRef.current.some(a => a.id === name);
+  const replaceSource = async (oldId: string, file: File) => {
+    const nid = file.name, x = sourcesRef.current.find(v => v.id === oldId);
+    if (!x) return addSource(file);
+    if (nid !== oldId && takenName(nid)) { setMsg({ kind: 'warn', text: `${nid}은 다른 칸에 이미 들어가 있어요.` }); return; }
+    x.video.pause(); URL.revokeObjectURL(x.video.src); x.video.remove();
+    sourcesRef.current = sourcesRef.current.filter(v => v.id !== oldId);
+    setSources(ss => ss.filter(v => v.id !== oldId));
+    if (nid !== oldId) {
+      const p = projRef.current, frames = { ...(p.frames || {}) };
+      for (const r of Object.keys(frames) as Ratio[]) frames[r] = renameKeys(frames[r], oldId, nid);
+      setProject({ clips: clipsOf(p, masterDur()).map(c => c.src === oldId ? { ...c, src: nid } : c), frames, skips: [] });
+      dropCloudRef('sources', oldId);
+    }
+    await addSource(file, true);
+    setMsg({ kind: 'ok', text: `${nid}(으)로 바꿨어요. 타임라인 위치·자르기·페이드는 그대로예요.` });
+  };
+  const replaceRec = async (oldId: string, file: File) => {
+    const nid = file.name;
+    if (!xrecRef.current.some(x => x.id === oldId)) return addRec(file);
+    if (nid !== oldId && takenName(nid)) { setMsg({ kind: 'warn', text: `${nid}은 다른 칸에 이미 들어가 있어요.` }); return; }
+    xrecRef.current = xrecRef.current.filter(x => x.id !== oldId);
+    setExtraRecs(xs => xs.filter(x => x.id !== oldId));
+    playerRef.current?.removeRec(oldId);
+    if (nid !== oldId) {
+      const p = projRef.current, a = recKey(oldId), b = recKey(nid);
+      setProject({ recClips: (p.recClips || []).map(c => c.src === oldId ? { ...c, src: nid } : c), trims: renameKeys(p.trims, a, b), recFades: renameKeys(p.recFades, a, b) });
+      dropCloudRef('recs', oldId);
+    }
+    await addRec(file, true);
+    setMsg({ kind: 'ok', text: `${nid}(으)로 바꿨어요. 타임라인 위치·줄이기·페이드는 그대로예요.` });
+  };
+  const replaceSheet = async (oldName: string, file: File) => {
+    const nn = file.name;
+    if (!extraRef.current.some(x => x.name === oldName)) return addSheet(file);
+    if (nn !== oldName && takenName(nn)) { setMsg({ kind: 'warn', text: `${nn}은 다른 칸에 이미 들어가 있어요.` }); return; }
+    const keep = extraRef.current;
+    extraRef.current = keep.filter(x => x.name !== oldName);
+    const ok = await addSheet(file, true);
+    if (!ok) { extraRef.current = keep; return; }   // 새 파일을 읽지 못했으면 예전 악보 그대로
+    if (nn !== oldName) {
+      const p = projRef.current;
+      if (p.sheetClips) setProject({ sheetClips: p.sheetClips.map(c => c.sheet === oldName ? { ...c, sheet: nn } : c) });
+      setExtraSheets(ss => ss.filter(x => x.name !== oldName));
+      dropCloudRef('sheets', oldName);
+    }
+    setMsg({ kind: 'ok', text: `${nn}(으)로 바꿨어요. 악보 위치·템포는 그대로예요.` });
+  };
+  const replaceAngle = async (oldId: string, file: File) => {
+    const nid = file.name, a = anglesRef.current.find(x => x.id === oldId);
+    if (!a) return loadAngle(file);
+    if (nid !== oldId && takenName(nid)) { setMsg({ kind: 'warn', text: `${nid}은 다른 칸에 이미 들어가 있어요.` }); return; }
+    a.video.pause(); URL.revokeObjectURL(a.video.src); a.video.remove();
+    anglesRef.current = anglesRef.current.filter(x => x.id !== oldId);
+    setAngles(as => as.filter(x => x.id !== oldId));
+    if (nid !== oldId) {
+      const p = projRef.current, frames = { ...(p.frames || {}) }, f = getFx(p);
+      for (const r of Object.keys(frames) as Ratio[]) frames[r] = renameKeys(frames[r], oldId, nid);
+      setProject({ cuts: p.cuts.map(c => c.angle === oldId ? { ...c, angle: nid } : c), angleOffsets: renameKeys(p.angleOffsets, oldId, nid) || {}, frames,
+        trims: renameKeys(p.trims, oldId, nid), fx: { ...f, colorMatch: { ...f.colorMatch, m: renameKeys(f.colorMatch.m, oldId, nid) || {} } } });
+      dropCloudRef('angles', oldId);
+    }
+    await loadAngle(file);
   };
 
   const removeAngle = (a: Angle) => {
@@ -1555,6 +1644,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
                   <span className="src-num">영상 {i + 2}</span>
                   <span className="src-name" title={x.name}>{x.name}</span>
                   {!x.track ? <span className="dim small">분석 중</span> : rTrack && <button type="button" className="link small" onClick={() => resyncSource(x.id)} title="이 영상의 소리를 녹음본에 다시 맞춰요">녹음본에 맞추기</button>}
+                  <ReplaceBtn id={`rep-src-${i}`} accept="video/*,.mov,.mp4,.m4v,.webm" onFile={f => replaceSource(x.id, f)} />
                   <button type="button" className="link small danger" onClick={() => removeSource(x.id)}>빼기</button>
                 </div>
               ))}
@@ -1575,6 +1665,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
                   <span className="src-num">녹음본 {i + 2}</span>
                   <span className="src-name" title={x.id}>{x.id}</span>
                   {x.track && (vTrack || sources.some(v => v.track)) && <button type="button" className="link small" onClick={() => resyncRec(x.id)} title="이 녹음본을 영상 소리에 다시 맞춰요">영상에 맞추기</button>}
+                  <ReplaceBtn id={`rep-rec-${i}`} accept=".mp3,.wav,.m4a,audio/mpeg,audio/wav" onFile={f => replaceRec(x.id, f)} />
                   <button type="button" className="link small danger" onClick={() => removeRec(x.id)}>빼기</button>
                 </div>
               ))}
@@ -1606,6 +1697,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
                     <span className="src-num">악보 {i + 2}</span>
                     <span className="src-name" title={x.name}>{x.name}</span>
                     <span className="dim small">{x.bars.length}마디</span>
+                    <ReplaceBtn id={`rep-sheet-${i}`} accept=".pdf,.png,.jpg,.jpeg,.webp,application/pdf,image/*" onFile={f => replaceSheet(x.name, f)} />
                     <button type="button" className="link small danger" onClick={() => removeSheet(x.name)}>빼기</button>
                     {c && (
                       <div className="src-bpm">
@@ -1640,7 +1732,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
                   active={angleAt(project.cuts, now) === a.id} onPick={() => switchAngle(i + 1)}
                   offset={project.angleOffsets[a.id]} confidence={a.confidence} analyzing={!a.track}
                   onNudge={d => setProject({ angleOffsets: { ...project.angleOffsets, [a.id]: (project.angleOffsets[a.id] || 0) + d } })}
-                  onResync={() => resyncAngle(a)} onRemove={() => removeAngle(a)} />
+                  onResync={() => resyncAngle(a)} onRemove={() => removeAngle(a)} onReplace={f => replaceAngle(a.id, f)} />
               ))}
             </div>
           )}
@@ -2045,6 +2137,16 @@ function FileSlot(p: { id: string; label: string; hint: string; accept: string; 
   );
 }
 
+/** 목록 항목의 '바꾸기': 같은 이름이어도 새 파일로 바꿈 (타임라인 설정은 그대로) */
+function ReplaceBtn(p: { id: string; accept: string; onFile: (f: File) => void }) {
+  return (
+    <label className="link small replace-btn" htmlFor={p.id} title="이 파일을 새 파일로 바꿔요 (이름이 같아도 돼요). 타임라인 위치·자르기·페이드 등은 그대로예요">
+      바꾸기
+      <input id={p.id} type="file" accept={p.accept} hidden onChange={e => { const f = e.target.files?.[0]; e.target.value = ''; if (f) p.onFile(f); }} />
+    </label>
+  );
+}
+
 function TrackRow(p: { id: string; label: string; color: string; on: boolean; vol: number; disabled: boolean; onToggle: () => void; onVol: (v: number) => void }) {
   return (
     <div className={`track ${p.disabled ? 'off' : ''}`}>
@@ -2083,7 +2185,7 @@ function SystemThumb(p: { sys: { canvas: HTMLCanvasElement; firstBar: number; ba
 
 function AngleCard(p: {
   num: number; color: string; name: string; video: HTMLVideoElement | null; active: boolean; onPick: () => void; main?: boolean;
-  offset?: number; confidence?: number | null; analyzing?: boolean; onNudge?: (d: number) => void; onResync?: () => void; onRemove?: () => void;
+  offset?: number; confidence?: number | null; analyzing?: boolean; onNudge?: (d: number) => void; onResync?: () => void; onRemove?: () => void; onReplace?: (f: File) => void;
 }) {
   const ref = useRef<HTMLCanvasElement>(null);
   const live = useRef(p);
@@ -2121,6 +2223,7 @@ function AngleCard(p: {
             <div className="row tight">
               {p.confidence !== null && p.confidence !== undefined && p.confidence >= 0 && <span className={`chip ${p.confidence > 1.5 ? 'good' : 'warn'}`}>{p.confidence > 1.5 ? '싱크 확실' : '싱크 확인'}</span>}
               <button type="button" className="link small" onClick={p.onResync}>자동 맞춤</button>
+              {p.onReplace && <ReplaceBtn id={`rep-angle-${p.num}`} accept="video/*,.mov,.mp4,.m4v,.webm" onFile={p.onReplace} />}
               <button type="button" className="link small danger" onClick={p.onRemove}>빼기</button>
             </div>
           </>

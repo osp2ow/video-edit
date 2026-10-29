@@ -34,6 +34,7 @@
 - 앞쪽 빈 구간 자동 정리, 서서히 확대·자막 추가 위치 버그 수정
 - 자막 위치 '이 자막만' 따로
 - (10/24) 큰 영상 불러오기: 소리만 골라 읽음 → 1.7GB 2.9초→0.5초, 4GB 넘는 영상도 이제 분석됨 (예전엔 읽기 실패). 결과는 파일 전체 디코딩과 똑같음 (`test/audiofile.mjs 영상...`)
+- (10/29) 추가 파일 바꾸기: 영상 추가·녹음본 추가·악보 추가·앵글 목록에 '바꾸기'(App.ReplaceBtn) + 같은 이름을 다시 넣으면 거절 대신 그 항목을 새 파일로 바꿈(replaceSource/replaceRec/replaceSheet/replaceAngle). 타임라인 설정 유지, 다른 이름이면 그 이름을 쓰던 조각·줄이기·페이드·싱크·전환점 키를 새 이름으로 (`test/replace.mjs`)
 - (10/29) 악보 카드 높이: render.sheetMetrics가 줄 그림 전체 대신 inkExtent(오선에 붙은 잉크 + 바로 위·아래 글씨 한 줄, 멀리 떨어진 제목은 뺌)로 계산 → 첫 줄 제목 때문에 모든 줄 카드가 커지던 문제 해결
 - (10/29) 악보 흰 여백 직접 자르기: CardLayout.cropT/cropB (비율별 카드 설정, 줄 그림 폭 대비). 미리보기 카드 위·아래 가운데 막대 끌기(위는 카드 위쪽이 따라오고 악보 줄은 제자리), 더블클릭하면 처음대로, 패널 '여백 처음대로'. 줄이기는 오선까지, 늘리기는 오선 3개 높이만큼 더 (render.cardMetrics) (`test/sheetcrop3.mjs`)
 - (10/28 밤) 영상 조각별 페이드: Clip.fadeIn/fadeOut (화면은 검게 effects.drawClipFade · 소리는 transport에서 볼륨, 추출은 mixAudio). 타임라인 영상 조각 클릭 → 위쪽 페이드 칸 / 조각 위쪽 네모 끌기 (`test/clipfade_copy.mjs`)

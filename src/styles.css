@@ -474,3 +474,4 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .src-item:has(.src-bpm) { flex-wrap: wrap; }
 .src-bpm { flex-basis: 100%; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .rot-row input[type=range] { flex: 1; }
+.replace-btn { cursor: pointer; }

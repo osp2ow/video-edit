@@ -490,3 +490,12 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .chord-btn.on { border-color: #8fdca4; box-shadow: 0 0 0 1px #8fdca4 inset; background: #22302a; }
 .chord-btn:disabled { opacity: 0.45; cursor: default; }
 .chord-thumb { display: block; }
+/* 코드표 직접 만들기 */
+.chord-editor { display: block; width: 100%; max-width: 272px; background: #1e1b17; border: 1px solid var(--line); border-radius: 8px; cursor: crosshair; touch-action: none; }
+.chord-opts { align-items: center; flex-wrap: wrap; }
+.chord-opts .mono { min-width: 20px; text-align: center; }
+.chord-lib-item { position: relative; }
+.chord-lib-item .chord-btn { width: 100%; }
+.chord-lib-del { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; display: grid; place-items: center; opacity: 0; }
+.chord-lib-item:hover .chord-lib-del, .chord-lib-del:focus-visible { opacity: 1; }
+.sec-lib { display: grid; gap: 6px; }

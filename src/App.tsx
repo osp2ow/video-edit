@@ -2,6 +2,7 @@ import { shiftProject, recKey, recKeyOf, MAIN_REC, RecClip, trimOf, bpmAt, mainS
 import { captionStyleOf, styleFor, CAP_SHARED, ownLook, ownPos } from './render';
 import { CaptionStudio } from './CaptionStudio';
 import { ChordPanel } from './ChordPanel';
+import { ChordData, blankChord, editableOf } from './chords';
 import { Angle, ANGLE_COLORS, makeAngleVideo, followMaster, activeSource } from './angles';
 import { fixEditList } from './movfix';
 import { decodeVideoAudio } from './audiofile';
@@ -1503,14 +1504,18 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   // ---------- 기타 코드표 (자막 줄에 들어가는 코드표) ----------
   const chordCaps = captions.filter(c => c.chord);
   /** 재생 위치에 코드표 넣기: 그 자리에 코드표가 있으면 그 코드로 바꾸고, 없으면 1마디(다음 코드표 전까지) 넣음 */
-  const placeChord = (name: string, v: number) => {
-    const p = projRef.current, caps = p.captions || [], t = tnow();
+  const placeChord = (d: ChordData, replace = true) => {
+    const p = projRef.current, t = tnow(), name = d.name;
+    let caps = p.captions || [];
     const here = caps.filter(c => c.chord && t >= c.start - 0.03 && t < c.end).pop();
-    if (here) { setCaptions(caps.map(c => c.id === here.id ? { ...c, text: name, chord: { name, v } } : c)); setSelCaption(here.id); return; }
+    if (here && replace) { setCaptions(caps.map(c => c.id === here.id ? { ...c, text: name || '코드', chord: { ...d } } : c)); setSelCaption(here.id); return; }
+    // 새 코드표를 다른 코드표 한가운데에 넣으면 앞 코드표는 거기서 끝남
+    if (here && t - here.start > 0.2) caps = caps.map(c => c.id === here.id ? { ...c, end: t } : c);
     let [a, b] = spanHere(1);
     const next = caps.filter(c => c.chord && c.start > a + 1e-3).sort((x, y) => x.start - y.start)[0];
     if (next && next.start < b) b = next.start;
-    const c: Caption = { id: 'ch' + Date.now().toString(36), start: a, end: Math.max(b, a + 0.3), text: name, chord: { name, v } };
+    if (here && t - here.start > 0.2) a = t;
+    const c: Caption = { id: 'ch' + Date.now().toString(36), start: a, end: Math.max(b, a + 0.3), text: name || '코드', chord: { ...d } };
     setCaptions([...caps, c]); setSelCaption(c.id);
     // 박에 맞춰 시작이 재생 위치보다 살짝 뒤면, 넣은 코드표가 바로 보이게 재생 위치를 그 안으로
     if (t < a && !transportRef.current?.playing) seek(a + 0.005);
@@ -1523,6 +1528,18 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   };
   const selCap = captions.find(c => c.id === selCaption) || null;
   const selChord = selCap?.chord ? selCap : null;
+  // 내 코드표: 직접 만든 코드표 저장 (이 컴퓨터 + 로그인했으면 내 계정 설정에도 → 다른 컴퓨터에서도 보임)
+  const [chordLib, setChordLib] = useState<ChordData[]>(() => { try { return JSON.parse(localStorage.getItem('pve.chordLib') || '[]'); } catch { return []; } });
+  const saveChordLib = (list: ChordData[]) => {
+    setChordLib(list);
+    try { localStorage.setItem('pve.chordLib', JSON.stringify(list)); } catch { /* 저장 못 함 */ }
+    cloud?.setPref?.('chordLib', list).catch?.(() => {});
+  };
+  useEffect(() => {
+    if (!cloud?.getPref || !user) return;
+    cloud.getPref('chordLib').then((v: any) => { if (Array.isArray(v) && v.length) { setChordLib(v); try { localStorage.setItem('pve.chordLib', JSON.stringify(v)); } catch { /* */ } } }).catch(() => {});
+    // eslint-disable-next-line
+  }, [user?.uid]);
   useEffect(() => { setCapScope('one'); setPosScope('one'); }, [selCaption]);   // 다른 자막을 고르면 다시 '이 자막만'
   const capEditStyle = selCap ? styleFor(project, ratio, selCap) : capStyle;
   /** 글꼴·위치는 늘 공통, 나머지(색·테두리·그림자·상자·등장 효과)는 capScope대로 — 기본은 이 자막만 */
@@ -1887,8 +1904,10 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             onSeek={seek} now={tnow} style={capEditStyle} scope={capScope} setScope={setCapScope} posScope={posScope} setPosScope={setPosScope} hasOwnPos={!!(selCap && ownPos(selCap, ratio))} onResetPos={resetCapPos} hasOwn={!!(selCap && ownLook(selCap))} onResetLook={resetCapLook} setStyle={setCapPatch}
             onClose={() => setStudioOpen(false)} focusKey={capFocus} disabled={!hasVideo} />
         ) : chordOpen ? (
-          <ChordPanel sel={selChord} count={chordCaps.length} size={chordPos.size} disabled={!hasVideo}
-            onPlace={placeChord} onVoicing={v => selChord && updateCaption(selChord.id, { chord: { ...selChord.chord!, v } })}
+          <ChordPanel sel={selChord} count={chordCaps.length} size={chordPos.size} disabled={!hasVideo} lib={chordLib}
+            onNew={() => placeChord(blankChord(), false)} onPlace={d => placeChord(editableOf(d))}
+            onChange={d => selChord && updateCaption(selChord.id, { chord: d, text: d.name || '코드' })}
+            onSaveLib={d => saveChordLib([...chordLib, editableOf(d)])} onRemoveLib={i => saveChordLib(chordLib.filter((_, k) => k !== i))}
             onSize={s => setChordPos({ size: s })} onResetPos={() => setChordPos(null)} onDelete={() => selChord && deleteCaption(selChord.id)}
             onClose={() => setChordOpen(false)} />
         ) : null}

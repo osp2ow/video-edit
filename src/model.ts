@@ -277,8 +277,8 @@ export interface CaptionStyle {
   anim: CaptionAnim;
 }
 export interface Caption { id: string; start: number; end: number; text: string; style?: Partial<CaptionStyle>; pos?: Partial<Record<Ratio, { x: number; y: number }>>; chord?: ChordRef }   // pos: 이 자막만의 위치 (화면 비율별) · chord: 글자 대신 기타 코드표 (text = 코드 이름)
-/** 자막 줄에 들어가는 기타 코드표: 코드 이름('Cm7') + 고른 운지 번호 */
-export interface ChordRef { name: string; v: number }
+/** 자막 줄에 들어가는 기타 코드표: 사용자가 직접 찍은 코드 이름·점 (chords.ts의 ChordData) */
+export type ChordRef = import('./chords').ChordData;
 /** 코드표 위치·크기 (모든 코드표 공통, 화면 비율별): x·y = 가운데 (화면 대비), size = 배율 */
 export interface ChordPos { x: number; y: number; size: number }
 export const defaultChordPos = (r: Ratio): ChordPos => r === '16:9' ? { x: 0.78, y: 0.32, size: 1 } : r === '4:5' ? { x: 0.5, y: 0.3, size: 1 } : { x: 0.5, y: 0.36, size: 1 };

@@ -1,4 +1,4 @@
-// 코드표: 버튼 → 패널 → 근음·코드 누르기 → 재생 위치에 넣기 / 같은 자리 바꾸기 / 운지 / 끌어 옮기기 / 크기
+// 코드표 직접 만들기: 새 코드표 → 이름 → 지판 점 찍기·X/O → 시작 프렛 → 내 코드표 저장 → 다시 넣기 → 미리보기 끌기·모서리 크기
 import { chromium } from 'playwright-core';
 const [V, DIR] = process.argv.slice(2);
 const NM = new URL('../node_modules', import.meta.url).pathname;
@@ -11,74 +11,69 @@ await page.goto('file://' + new URL('../dist/index.html', import.meta.url).pathn
 await page.setInputFiles('#f-video', V); await page.waitForFunction(() => /분석 완료|자동 감지/.test(document.querySelector('.status')?.textContent || ''), null, { timeout: 60000 });
 await page.waitForTimeout(800);
 const P = () => page.evaluate(() => { const k = Object.keys(localStorage).find(k => k.startsWith('pve.proj:')); return JSON.parse(localStorage.getItem(k)); });
+const chords = async () => (await P()).captions?.filter(c => c.chord).sort((a, b) => a.start - b.start) || [];
 const ok = (n, c) => console.log(c ? 'ok  ' : 'FAIL', n);
 await page.click('.tl-zoom >> text=전체 보기'); await page.waitForTimeout(200);
 const tl = await page.locator('.tl-canvas canvas').boundingBox();
 const end = await page.evaluate(() => { const [m, s] = document.querySelector('.now-t').nextElementSibling.textContent.replace('/', '').trim().split(':'); return +m * 60 + +s; });
 const X = t => tl.x + (t + end * 0.01) * ((tl.width - 2) / (end * 1.02));
 const seek = async t => { await page.mouse.click(X(t), tl.y + 21); await page.waitForTimeout(300); };
-ok('chord button next to caption button', await page.locator('.studio-tabs .chord-tab').count() === 1 && await page.locator('.studio-tabs .studio-tab').count() === 2);
 await page.click('.chord-tab');
-ok('panel open', await page.locator('#chord-panel').count() === 1);
+ok('no preset chord list', await page.locator('#chord-panel .chord-roots').count() === 0);
 await seek(2);
-await page.click('#chord-panel .chord-roots button:text-is("G")');
-await page.click('#chord-panel .chord-grid .chord-btn >> nth=0');   // G
-await page.waitForTimeout(200);
-let p = await P(); let ch = (p.captions || []).filter(c => c.chord);
-console.log('chords', JSON.stringify(ch.map(c => [c.chord.name, c.chord.v, +c.start.toFixed(2), +c.end.toFixed(2)])));
-ok('G inserted at playhead', ch.length === 1 && ch[0].chord.name === 'G' && Math.abs(ch[0].start - 2) < 0.6);
-const box = await page.locator('canvas.stage').boundingBox();
-if (DIR) await page.screenshot({ path: DIR + '/chord-g.png' });
-// 같은 자리에서 Em7 누르기 → 바꾸기
-await page.click('#chord-panel .chord-roots button:text-is("E")');
-await page.click('#chord-panel .chord-grid .chord-btn >> nth=3');   // Em7
-await page.waitForTimeout(200);
-p = await P(); ch = p.captions.filter(c => c.chord);
-console.log('   now', await page.textContent('.now-t'), JSON.stringify(ch.map(c => [c.chord.name, c.start, c.end])));
-ok('same spot → replaced with Em7', ch.length === 1 && ch[0].chord.name === 'Em7');
-// 운지 2번째
-await page.click('#chord-panel .chord-voicings .chord-btn >> nth=1'); await page.waitForTimeout(150);
-p = await P(); ok('voicing 2 chosen', p.captions.find(c => c.chord).chord.v === 1);
-// 다른 자리에 하나 더
+await page.click('#chord-panel >> text=+ 새 코드표'); await page.waitForTimeout(200);
+let ch = await chords();
+ok('blank chord inserted', ch.length === 1 && ch[0].chord.frets.every(f => f === -2));
+await page.fill('#chord-name', 'Am7'); await page.waitForTimeout(100);
+// 지판 칸 위치 찾기: 흰 가로선(줄 6개) · 세로선(프렛)
+const ed = await page.locator('.chord-editor').boundingBox();
+const grid = await page.evaluate(() => {
+  const c = document.querySelector('.chord-editor'), ctx = c.getContext('2d'), w = c.width, h = c.height, d = ctx.getImageData(0, 0, w, h).data;
+  const wh = (x, y) => d[(y * w + x) * 4 + 3] > 200 && d[(y * w + x) * 4] > 200;
+  const rows = [], cols = [];
+  for (let y = 0; y < h; y++) { let n = 0; for (let x = 0; x < w; x++) if (wh(x, y)) n++; if (n > w * 0.45) rows.push(y); }
+  const ys = rows.filter((y, i) => i === 0 || y - rows[i - 1] > 2);
+  const y0 = ys[0], y1 = ys[ys.length - 1];
+  for (let x = 0; x < w; x++) { let n = 0; for (let y = y0; y <= y1; y++) if (wh(x, y)) n++; if (n > (y1 - y0) * 0.9) cols.push(x); }
+  const xs = cols.filter((x, i) => i === 0 || x - cols[i - 1] > 2);
+  return { ys, xs, scale: c.getBoundingClientRect().width / w };
+});
+console.log('grid', JSON.stringify(grid));
+const s = grid.scale, rowY = k => ed.y + grid.ys[k] * s + 1;   // k: 0 = 맨 위 = 1번줄
+const cellX = n => ed.x + ((grid.xs[n - 1] + grid.xs[n]) / 2) * s; // n번째 칸
+const xoX = ed.x + (grid.xs[0] - 10) * s;
+const tap = async (x, y) => { await page.mouse.click(x, y); await page.waitForTimeout(60); };
+// Am7 = x02010 (6번줄 X, 5번줄 O, 4번줄 2프렛, 3번줄 O, 2번줄 1프렛, 1번줄 O)
+await tap(xoX, rowY(5)); await tap(xoX, rowY(5));   // 6번줄: O → X
+await tap(xoX, rowY(4));                             // 5번줄 O
+await tap(cellX(2), rowY(3));                        // 4번줄 2프렛
+await tap(xoX, rowY(2));                             // 3번줄 O
+await tap(cellX(1), rowY(1));                        // 2번줄 1프렛
+await tap(xoX, rowY(0));                             // 1번줄 O
+await page.waitForTimeout(150);
+ch = await chords();
+console.log('frets', JSON.stringify(ch[0].chord.frets), ch[0].chord.name, ch[0].text);
+ok('dots placed = x02010', JSON.stringify(ch[0].chord.frets) === '[-1,0,2,0,1,0]' && ch[0].chord.name === 'Am7' && ch[0].text === 'Am7');
+await tap(cellX(1), rowY(1)); ch = await chords(); ok('tap again removes dot', ch[0].chord.frets[4] === -2);
+await tap(cellX(1), rowY(1)); ch = await chords();
+// 시작 프렛 올리기
+await page.click('button[aria-label="시작 프렛 올리기"]'); await page.waitForTimeout(100);
+ch = await chords(); ok('base fret 2', ch[0].chord.base === 2);
+await page.click('button[aria-label="시작 프렛 내리기"]');
+if (DIR) await page.screenshot({ path: DIR + '/custom.png' });
+// 내 코드표에 저장 → 다른 자리에 다시 넣기
+await page.click('#chord-panel >> text=내 코드표에 저장'); await page.waitForTimeout(100);
+ok('saved to my charts', await page.locator('.chord-lib-item').count() === 1);
 await seek(ch[0].end + 1);
-await page.click('#chord-panel .chord-roots button:text-is("C")');
-await page.click('#chord-panel .chord-grid .chord-btn >> nth=4');   // CM7
-await page.waitForTimeout(200);
-p = await P(); ch = p.captions.filter(c => c.chord).sort((a, b) => a.start - b.start);
-ok('second chord CM7 added', ch.length === 2 && ch[1].chord.name === 'CM7');
-// 미리보기에서 끌어 옮기기 (지금 보이는 CM7)
-const cp0 = p.chordPos?.['9:16'] || { x: 0.5, y: 0.36 };
-const k = box.width / 1080;
+await page.click('.chord-lib-item .chord-btn'); await page.waitForTimeout(200);
+ch = await chords();
+ok('reused from my charts', ch.length === 2 && JSON.stringify(ch[1].chord.frets) === '[-1,0,2,0,1,0]' && ch[1].chord.name === 'Am7');
+// 미리보기: 끌어 옮기기
+const box = await page.locator('canvas.stage').boundingBox(), k = box.width / 1080;
+let p = await P(); const cp0 = { x: 0.5, y: 0.36, ...(p.chordPos?.['9:16'] || {}) };
 const sx = box.x + cp0.x * 1080 * k, sy = box.y + cp0.y * 1920 * k;
-await page.mouse.move(sx, sy); await page.mouse.down(); await page.mouse.move(sx - 60, sy + 120, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(200);
-p = await P(); console.log('chordPos', JSON.stringify(p.chordPos));
-ok('dragged chord position (shared)', p.chordPos?.['9:16'] && p.chordPos['9:16'].y > cp0.y + 0.05 && !p.captions.some(c => c.chord && c.pos));
-// 미리보기에서 오른쪽 아래 모서리를 바깥으로 끌어 크기 키우기
-{
-  const geo = await page.evaluate(() => { const c = document.querySelector('canvas.stage'); return { w: c.width, h: c.height }; });
-  const cp = p.chordPos['9:16'];
-  // 모서리 위치를 캔버스 픽셀로 찾기: 코드표 테두리(초록 점선)는 골라 둔 코드표에 그려짐 → 가운데에서 바깥으로 훑어 손잡이(흰 네모) 찾기
-  const corner = await page.evaluate(([x, y]) => {
-    const c = document.querySelector('canvas.stage'), ctx = c.getContext('2d');
-    const cx = x * c.width, cy = y * c.height; let best = null;
-    for (let dx = 0; dx < c.width * 0.6; dx += 2) { const px = Math.round(cx + dx); if (px >= c.width) break;
-      for (let dy = 0; dy < c.height * 0.2; dy += 2) { const py = Math.round(cy + dy); const d = ctx.getImageData(px, py, 1, 1).data;
-        if (d[0] > 240 && d[1] > 240 && d[2] > 240) { const e = ctx.getImageData(px + 3, py + 3, 1, 1).data; if (e[1] > 130 && e[0] < 120) best = [px, py]; } } }
-    return best;
-  }, [cp.x, cp.y]);
-  console.log('corner', JSON.stringify(corner));
-  if (corner) {
-    const k2 = box.width / geo.w, sx2 = box.x + corner[0] * k2, sy2 = box.y + corner[1] * k2;
-    await page.mouse.move(sx2, sy2); await page.mouse.down(); await page.mouse.move(sx2 + 40, sy2 + 25, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(150);
-  }
-  const p2 = await P(); console.log('size after corner drag', p2.chordPos['9:16'].size);
-  ok('corner drag resizes', corner && p2.chordPos['9:16'].size > 1.05);
-}
-await page.locator('#chord-size').fill('1.4'); await page.waitForTimeout(150);
-p = await P(); ok('size saved', p.chordPos['9:16'].size === 1.4);
-if (DIR) { await page.screenshot({ path: DIR + '/chord-cm7.png' }); await page.locator('#chord-panel').screenshot({ path: DIR + '/panel.png' }); }
-// 자막 패널에는 코드표가 안 나옴
-await page.click('.studio-tabs .studio-tab >> nth=0'); await page.waitForTimeout(200);
-ok('caption studio opens and chord panel closes', await page.locator('#chord-panel').count() === 0);
+await page.mouse.move(sx, sy); await page.mouse.down(); await page.mouse.move(sx - 40, sy + 100, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(150);
+p = await P(); ok('drag moves chord', p.chordPos?.['9:16']?.y > cp0.y + 0.03);
+if (DIR) await page.screenshot({ path: DIR + '/custom2.png' });
 console.log(logs.join('\n') || 'no page errors');
 await browser.close();

@@ -1,6 +1,6 @@
 // 프레임 렌더러 — 미리보기와 (다음 단계의) MP4 추출이 같은 함수를 쓴다.
 import { CardLayout, Project, VideoXf, Caption, CaptionStyle, Ratio, sheetPos, getXf, defaultXf, normCaptionStyle, barStart, barLen, ratioOfWH, RATIOS, getFx, bpmAt, chordPosOf } from './model';
-import { parseChord, voicingsOf, Voicing } from './chords';
+import { chartOf, Voicing } from './chords';
 import { SheetData } from './sheet';
 
 export const FONT = '"IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI Symbol", "Apple Symbols", sans-serif';
@@ -370,7 +370,7 @@ export function chordGeom(W: number, H: number, st: { x: number; y: number; size
   const base = Math.min(W, H);
   const gw = base * 0.42 * st.size, gh = gw * 0.62;          // 코드표 칸 (4프렛 × 5칸)
   const fr = v ? v.frets.filter(x => x > 0) : [];
-  const nFret = Math.max(4, v && fr.length ? Math.max(...fr) - v.base + 1 : 4);
+  const nFret = Math.max(v?.span || 4, v && fr.length ? Math.max(...fr) - v.base + 1 : 4);
   const nameFs = gh * 0.46, gap = gh * 0.16, xoW = gh * 0.17;
   const nameW = Math.max(gh * 0.4, measureName(name, nameFs));
   const footH = v && v.base > 1 ? gh * 0.22 : gh * 0.06;
@@ -384,12 +384,7 @@ function measureName(name: string, fs: number) {
   measureCtx!.font = `800 ${fs}px ${FONT}`;
   return measureCtx!.measureText(name).width;
 }
-export const chordVoicing = (c: Caption): Voicing | null => {
-  const pc = c.chord ? parseChord(c.chord.name) : null;
-  if (!pc) return null;
-  const vs = voicingsOf(pc.root, pc.q);
-  return vs[Math.max(0, Math.min(vs.length - 1, c.chord!.v || 0))] || null;
-};
+export const chordVoicing = (c: Caption): Voicing | null => c.chord ? chartOf(c.chord) : null;
 /** 코드표 그리기 (투명 배경, 흰 선·점, 은은한 그림자로 밝은 화면에서도 보이게) */
 export function paintChord(ctx: CanvasRenderingContext2D, W: number, H: number, st: { x: number; y: number; size: number }, name: string, v: Voicing | null) {
   const g = chordGeom(W, H, st, v, name);
@@ -411,18 +406,19 @@ export function paintChord(ctx: CanvasRenderingContext2D, W: number, H: number, 
   if (v) {
     const r = rowGap * 0.36, cx = (f: number) => g.gx + (f - v.base + 0.5) * cell;
     // 바레
-    if (v.barre) {
+    if (v.barre && v.barre.fret >= v.base && v.barre.fret < v.base + g.nFret) {
       const b = v.barre, y0 = rowY(b.to), y1 = rowY(b.from);
       ctx.beginPath(); ctx.roundRect(cx(b.fret) - r, Math.min(y0, y1) - r, r * 2, Math.abs(y1 - y0) + r * 2, r); ctx.fill();
     }
     for (let s = 0; s < 6; s++) {
       const f = v.frets[s];
-      if (f > 0 && !(v.barre && f === v.barre.fret && s >= v.barre.from && s <= v.barre.to)) { ctx.beginPath(); ctx.arc(cx(f), rowY(s), r, 0, Math.PI * 2); ctx.fill(); }
+      const inWin = f >= v.base && f < v.base + g.nFret;   // 표 칸 밖 프렛은 안 그림 (시작 프렛을 바꿨을 때)
+      if (f > 0 && inWin && !(v.barre && f === v.barre.fret && s >= v.barre.from && s <= v.barre.to)) { ctx.beginPath(); ctx.arc(cx(f), rowY(s), r, 0, Math.PI * 2); ctx.fill(); }
       // 개방현 O · 안 치는 줄 X (줄받침 왼쪽)
       const mx = g.gx - g.xoW * 0.55, my = rowY(s), m = rowGap * 0.26;
       ctx.lineWidth = lw * 0.9;
       if (f === 0) { ctx.beginPath(); ctx.arc(mx, my, m, 0, Math.PI * 2); ctx.stroke(); }
-      else if (f < 0) { ctx.beginPath(); ctx.moveTo(mx - m, my - m); ctx.lineTo(mx + m, my + m); ctx.moveTo(mx + m, my - m); ctx.lineTo(mx - m, my + m); ctx.stroke(); }
+      else if (f === -1) { ctx.beginPath(); ctx.moveTo(mx - m, my - m); ctx.lineTo(mx + m, my + m); ctx.moveTo(mx + m, my - m); ctx.lineTo(mx - m, my + m); ctx.stroke(); }
     }
     // 몇 번 프렛부터인지
     if (v.base > 1) { ctx.font = `700 ${g.gh * 0.17}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(`${v.base}fr`, g.gx + cell / 2, g.gy + g.gh + g.gh * 0.05); }
@@ -546,7 +542,7 @@ export function drawCaption(ctx: CanvasRenderingContext2D, W: number, H: number,
     // 코드표: 한 번 그린 그림을 저장해 두고 붙여넣기 (그림자 때문에 매 프레임 그리면 느림)
     const a = Math.max(0, Math.min(1, (t - c.start) / 0.15, (c.end - t) / 0.12));
     if (a <= 0) return;
-    const key = `${W}x${H}|${c.chord.name}|${c.chord.v}|${st.x.toFixed(4)}|${st.y.toFixed(4)}|${st.size}`;
+    const key = `${W}x${H}|${JSON.stringify(c.chord)}|${st.x.toFixed(4)}|${st.y.toFixed(4)}|${st.size}`;   // 점·이름을 바꾸면 새로 그림
     let sp = chordSprites.get(key);
     if (!sp) {
       const v = chordVoicing(c), g = chordGeom(W, H, st, v, c.chord.name), m = Math.ceil(g.gw * 0.08);

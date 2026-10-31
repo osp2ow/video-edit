@@ -3,7 +3,7 @@ import { build } from 'esbuild';
 import { mkdtempSync } from 'fs';
 import { tmpdir } from 'os';
 const dir = mkdtempSync(tmpdir() + '/ch-');
-await build({ entryPoints: ['src/chords.ts'], bundle: true, outfile: dir + '/c.mjs', format: 'esm', platform: 'node' });
+await build({ entryPoints: ['src/chordLegacy.ts'], bundle: true, outfile: dir + '/c.mjs', format: 'esm', platform: 'node' });
 const C = await import(dir + '/c.mjs');
 let bad = 0, total = 0;
 const fmt = f => f.map(x => x < 0 ? 'x' : x.toString(36)).join('');

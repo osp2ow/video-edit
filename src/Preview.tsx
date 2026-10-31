@@ -31,7 +31,8 @@ interface Props {
   onXf: (id: string, xf: VideoXf) => void;
   onPip?: (pos: PipPos | null) => void;
   levelGrid?: boolean;   // 수평 맞추기용 격자
-  onEditChord?: (id: string) => void;   // 코드표 더블클릭 → 코드표 패널   // PIP 작은 화면 옮기기·크기 (null = 기본 자리로)
+  onEditChord?: (id: string) => void;   // 코드표 더블클릭 → 코드표 패널
+  onChordSize?: (size: number) => void;   // 코드표 모서리 끌기 → 크기 (모든 코드표 공통)   // PIP 작은 화면 옮기기·크기 (null = 기본 자리로)
   onCaptionMove: (id: string, x: number, y: number) => void;
   onCardStyle?: (kind: 'intro' | 'outro', patch: Partial<CardStyle>) => void;
   onEditCard?: (kind: 'intro' | 'outro', page?: string) => void;
@@ -56,7 +57,7 @@ function pickSource(p: Props) {
 
 const curSheet = (p: Props) => sheetAt(p.project, p.sheet, p.sheets, p.now());
 
-type Mode = 'move' | 'resize' | 'video' | 'cl' | 'cr' | 'ct' | 'cb' | 'cap' | 'tc' | 'tcw' | 'tcs' | 'pip' | 'pipr' | 'sheetT' | 'sheetB';
+type Mode = 'move' | 'resize' | 'video' | 'cl' | 'cr' | 'ct' | 'cb' | 'cap' | 'tc' | 'tcw' | 'tcs' | 'pip' | 'pipr' | 'sheetT' | 'sheetB' | 'chordR';
 interface Drag {
   mode: Mode;
   sx: number; sy: number;
@@ -128,7 +129,7 @@ export function Preview(props: Props) {
             { viewTrack: live.current.viewTrack, beforeCard: showSafe ? () => drawSafe(ctx, w, h, ratio) : undefined, ghostCard: false, preview: true });
           if (!hasVideo && showSafe) drawSafe(ctx, w, h, ratio);
           if (!clean) {
-            drawCapOutline(ctx, w, h, t, project, ratio, drag.current?.mode === 'cap' || hover.current === 'cap');
+            drawCapOutline(ctx, w, h, t, project, ratio, drag.current?.mode === 'cap' || hover.current === 'cap' || drag.current?.mode === 'chordR' || hover.current === 'chordR', live.current.selCaption);
             {
               const tc = activeTitleCard(ctx, w, h, t, project, range());
               const m = drag.current?.mode || hover.current;
@@ -213,6 +214,19 @@ export function Preview(props: Props) {
     return null;
   };
 
+  /** 보이는 코드표의 네 모서리 근처를 눌렀는지 */
+  const chordCornerHit = (x: number, y: number) => {
+    const p = live.current;
+    if (!p.onChordSize || p.viewTrack || p.cropMode) return null;
+    const ctx = canvasRef.current!.getContext('2d')!, r = W * 0.03;
+    for (const c of activeCaptions(p.project, p.now())) {
+      if (!c.chord) continue;
+      const b = captionBox(ctx, W, H, c, styleFor(p.project, p.ratio, c));
+      for (const [cx, cy] of [[b.x, b.y], [b.x + b.w, b.y], [b.x, b.y + b.h], [b.x + b.w, b.y + b.h]]) if (Math.hypot(x - cx, y - cy) < r) return c;
+    }
+    return null;
+  };
+
   const hit = (x: number, y: number): Mode | null => {
     const p = live.current;
     const src = source();
@@ -229,6 +243,7 @@ export function Preview(props: Props) {
     }
     const tch = tcHit(x, y);
     if (tch) return tch.mode;
+    if (chordCornerHit(x, y)) return 'chordR';   // 코드표 네 모서리: 크기
     const cap = capHit(x, y);
     if (cap) return 'cap';
     // PIP는 악보 카드에 가려져도 잡을 수 있게 카드보다 먼저
@@ -247,7 +262,7 @@ export function Preview(props: Props) {
     return src ? 'video' : null;
   };
 
-  const CURSOR: Record<Mode, string> = { tc: 'move', tcw: 'ew-resize', tcs: 'nwse-resize', cap: 'move', move: 'grab', resize: 'nwse-resize', video: 'move', pip: 'move', pipr: 'nwse-resize', sheetT: 'ns-resize', sheetB: 'ns-resize', cl: 'ew-resize', cr: 'ew-resize', ct: 'ns-resize', cb: 'ns-resize' };
+  const CURSOR: Record<Mode, string> = { tc: 'move', tcw: 'ew-resize', tcs: 'nwse-resize', cap: 'move', move: 'grab', resize: 'nwse-resize', video: 'move', pip: 'move', pipr: 'nwse-resize', chordR: 'nwse-resize', sheetT: 'ns-resize', sheetB: 'ns-resize', cl: 'ew-resize', cr: 'ew-resize', ct: 'ns-resize', cb: 'ns-resize' };
 
   const onDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const { x, y } = toCanvas(e);
@@ -256,7 +271,7 @@ export function Preview(props: Props) {
     e.currentTarget.setPointerCapture(e.pointerId);
     (document.activeElement as HTMLElement | null)?.blur?.();
     const src = source();
-    const hitCap = m === 'cap' ? capHit(x, y) : null;
+    const hitCap = m === 'cap' ? capHit(x, y) : m === 'chordR' ? chordCornerHit(x, y) : null;
     const tch = m === 'tc' || m === 'tcw' || m === 'tcs' ? tcHit(x, y) : null;
     if (hitCap) live.current.onSelectCaption(hitCap.id);
     drag.current = { mode: m, sx: x, sy: y, start: { ...live.current.layout }, guides: [],
@@ -321,6 +336,13 @@ export function Preview(props: Props) {
         d.guides = guides;
         p.onPip?.({ x: b.x / W, y: b.y / H, w: nw / W });
       }
+      return;
+    }
+    if (d.mode === 'chordR' && d.cap0) {
+      // 코드표 크기: 가운데에서 손까지 거리 비율만큼 (모든 코드표 공통)
+      const cx = d.cap0.x * W, cy = d.cap0.y * H;
+      const r0 = Math.max(4, Math.hypot(d.sx - cx, d.sy - cy)), r1 = Math.hypot(x - cx, y - cy);
+      p.onChordSize?.(Math.round(Math.max(0.4, Math.min(2, d.cap0.size * r1 / r0)) * 100) / 100);
       return;
     }
     if (d.mode === 'cap' && d.cap0) {
@@ -620,11 +642,22 @@ function drawBadge(ctx: CanvasRenderingContext2D, W: number, text: string) {
   ctx.restore();
 }
 
-function drawCapOutline(ctx: CanvasRenderingContext2D, W: number, H: number, t: number, p: Project, ratio: Ratio, on: boolean) {
-  if (!on) return;
+function drawCapOutline(ctx: CanvasRenderingContext2D, W: number, H: number, t: number, p: Project, ratio: Ratio, on: boolean, selId?: string | null) {
   ctx.save();
-  ctx.strokeStyle = '#ffd27a'; ctx.lineWidth = W * 0.003; ctx.setLineDash([W * 0.012, W * 0.008]);
-  for (const c of activeCaptions(p, t)) { const b = captionBox(ctx, W, H, c, styleFor(p, ratio, c)); ctx.strokeRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8); }
+  for (const c of activeCaptions(p, t)) {
+    // 코드표는 골라 두었거나 마우스를 올리면 테두리 + 네 모서리 손잡이 (끌어서 크기)
+    const showChord = !!c.chord && (on || c.id === selId);
+    if (!on && !showChord) continue;
+    const b = captionBox(ctx, W, H, c, styleFor(p, ratio, c));
+    ctx.strokeStyle = c.chord ? '#8fdca4' : '#ffd27a'; ctx.lineWidth = W * 0.003; ctx.setLineDash([W * 0.012, W * 0.008]);
+    ctx.strokeRect(b.x - 4, b.y - 4, b.w + 8, b.h + 8);
+    if (c.chord) {
+      ctx.setLineDash([]);
+      const s = W * 0.018;
+      ctx.fillStyle = '#fff'; ctx.strokeStyle = '#3f9a5c'; ctx.lineWidth = W * 0.003;
+      for (const [cx, cy] of [[b.x - 4, b.y - 4], [b.x + b.w + 4, b.y - 4], [b.x - 4, b.y + b.h + 4], [b.x + b.w + 4, b.y + b.h + 4]]) { ctx.beginPath(); ctx.rect(cx - s / 2, cy - s / 2, s, s); ctx.fill(); ctx.stroke(); }
+    }
+  }
   ctx.restore();
 }
 

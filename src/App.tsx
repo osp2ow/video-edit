@@ -1917,6 +1917,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             cropMode={cropMode} viewTrack={viewTrack} viewLabel={viewTrack ? `${viewNum}번 앵글 보는 중` : ''} onXf={(id, xf) => setProject({ frames: withXf(projRef.current, ratio, id, xf) })}
             levelGrid={levelGrid}
             onEditChord={id => { setSelCaption(id); setChordOpen(true); }}
+            onChordSize={s => setChordPos({ size: s })}
             onPip={pos => { const pp = { ...(projRef.current.pip || {}) }; if (pos) pp[ratio] = pos; else delete pp[ratio]; setProject({ pip: pp }); }} />
           <NeededFiles need={needList} onClose={() => setWant(null)} />
           {remoteEdit && (

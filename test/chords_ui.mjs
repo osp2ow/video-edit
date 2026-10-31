@@ -53,6 +53,27 @@ const sx = box.x + cp0.x * 1080 * k, sy = box.y + cp0.y * 1920 * k;
 await page.mouse.move(sx, sy); await page.mouse.down(); await page.mouse.move(sx - 60, sy + 120, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(200);
 p = await P(); console.log('chordPos', JSON.stringify(p.chordPos));
 ok('dragged chord position (shared)', p.chordPos?.['9:16'] && p.chordPos['9:16'].y > cp0.y + 0.05 && !p.captions.some(c => c.chord && c.pos));
+// 미리보기에서 오른쪽 아래 모서리를 바깥으로 끌어 크기 키우기
+{
+  const geo = await page.evaluate(() => { const c = document.querySelector('canvas.stage'); return { w: c.width, h: c.height }; });
+  const cp = p.chordPos['9:16'];
+  // 모서리 위치를 캔버스 픽셀로 찾기: 코드표 테두리(초록 점선)는 골라 둔 코드표에 그려짐 → 가운데에서 바깥으로 훑어 손잡이(흰 네모) 찾기
+  const corner = await page.evaluate(([x, y]) => {
+    const c = document.querySelector('canvas.stage'), ctx = c.getContext('2d');
+    const cx = x * c.width, cy = y * c.height; let best = null;
+    for (let dx = 0; dx < c.width * 0.6; dx += 2) { const px = Math.round(cx + dx); if (px >= c.width) break;
+      for (let dy = 0; dy < c.height * 0.2; dy += 2) { const py = Math.round(cy + dy); const d = ctx.getImageData(px, py, 1, 1).data;
+        if (d[0] > 240 && d[1] > 240 && d[2] > 240) { const e = ctx.getImageData(px + 3, py + 3, 1, 1).data; if (e[1] > 130 && e[0] < 120) best = [px, py]; } } }
+    return best;
+  }, [cp.x, cp.y]);
+  console.log('corner', JSON.stringify(corner));
+  if (corner) {
+    const k2 = box.width / geo.w, sx2 = box.x + corner[0] * k2, sy2 = box.y + corner[1] * k2;
+    await page.mouse.move(sx2, sy2); await page.mouse.down(); await page.mouse.move(sx2 + 40, sy2 + 25, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(150);
+  }
+  const p2 = await P(); console.log('size after corner drag', p2.chordPos['9:16'].size);
+  ok('corner drag resizes', corner && p2.chordPos['9:16'].size > 1.05);
+}
 await page.locator('#chord-size').fill('1.4'); await page.waitForTimeout(150);
 p = await P(); ok('size saved', p.chordPos['9:16'].size === 1.4);
 if (DIR) { await page.screenshot({ path: DIR + '/chord-cm7.png' }); await page.locator('#chord-panel').screenshot({ path: DIR + '/panel.png' }); }

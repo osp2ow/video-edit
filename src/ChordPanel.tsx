@@ -46,7 +46,6 @@ export function ChordPanel(p: Props) {
         <h2>코드표 {p.count > 0 && <span className="dim small">{p.count}개</span>}</h2>
         <button type="button" className="btn ghost sm" onClick={p.onClose}>닫기</button>
       </div>
-      <p className="small dim">코드를 누르면 재생 위치에 1마디 동안 넣어요. 그 자리에 이미 코드표가 있으면 그 코드로 바꿔요. 미리보기에서 끌어서 위치를 옮길 수 있어요(모든 코드표가 같이).</p>
       <div className="chord-roots" role="tablist" aria-label="근음">
         {ROOTS.map(r => <button key={r} type="button" role="tab" aria-selected={root === r} className={root === r ? 'on' : ''} onClick={() => setRoot(r)}>{r}</button>)}
       </div>

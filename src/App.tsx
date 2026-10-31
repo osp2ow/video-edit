@@ -1,6 +1,7 @@
-import { shiftProject, recKey, recKeyOf, MAIN_REC, RecClip, trimOf, bpmAt, mainShift, recAtOf, sheetClipsOf, sheetClipEnd, sheetHome, SheetClip, clipEnd, barAt, Project, Ratio, CardLayout, Cut, CutSnap, MAIN, defaultProject, defaultLayouts, barBeat, barStart, barLen, beatLen, fmtTime, angleAt, setCutAt, snapTime, normalizeCuts, sheetStart, sheetEnd, sheetIndex, barOfSheet, VideoXf, getXf, withXf, defaultXf, Caption, CaptionStyle, Fx, getFx, LAYOUT_LABEL, clipsOf, timelineEnd, Clip, RATIOS, RATIO_LABEL, MarkKind, Punch, MARK_AMT, cardSpan, FIRST_PAGE } from './model';
+import { shiftProject, recKey, recKeyOf, MAIN_REC, RecClip, trimOf, bpmAt, mainShift, recAtOf, sheetClipsOf, sheetClipEnd, sheetHome, SheetClip, clipEnd, barAt, Project, Ratio, CardLayout, Cut, CutSnap, MAIN, defaultProject, defaultLayouts, barBeat, barStart, barLen, beatLen, fmtTime, angleAt, setCutAt, snapTime, normalizeCuts, sheetStart, sheetEnd, sheetIndex, barOfSheet, VideoXf, getXf, withXf, defaultXf, Caption, CaptionStyle, Fx, getFx, LAYOUT_LABEL, clipsOf, timelineEnd, Clip, RATIOS, RATIO_LABEL, MarkKind, Punch, MARK_AMT, cardSpan, FIRST_PAGE, chordPosOf, ChordPos } from './model';
 import { captionStyleOf, styleFor, CAP_SHARED, ownLook, ownPos } from './render';
 import { CaptionStudio } from './CaptionStudio';
+import { ChordPanel } from './ChordPanel';
 import { Angle, ANGLE_COLORS, makeAngleVideo, followMaster, activeSource } from './angles';
 import { fixEditList } from './movfix';
 import { decodeVideoAudio } from './audiofile';
@@ -185,7 +186,10 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const [levelGrid, setLevelGrid] = useState(false);   // 회전 슬라이더를 만지는 동안 미리보기에 수평 격자   // 타임라인에서 고른 영상 조각의 파일 (MAIN = 첫 영상)
   const [inOut, setInOut] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
   const [selCaption, setSelCaption] = useState<string | null>(null);
-  const [studioOpen, setStudioOpen] = useState(false);
+  const [studioOpen, setStudioOpenS] = useState(false);
+  const [chordOpen, setChordOpenS] = useState(false);   // 코드표 패널 (자막 패널과 같은 자리라 하나만 열림)
+  const setStudioOpen = (v: boolean) => { setStudioOpenS(v); if (v) setChordOpenS(false); };
+  const setChordOpen = (v: boolean) => { setChordOpenS(v); if (v) setStudioOpenS(false); };
   const [capFocus, setCapFocus] = useState(0);
   // ---------- 클라우드 프로젝트 ----------
   const [projects, setProjects] = useState<ProjectDoc[]>([]);
@@ -1491,8 +1495,34 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   };
   const updateCaption = (id: string, patch: Partial<Caption>) => setCaptions((projRef.current.captions || []).map(c => c.id === id ? { ...c, ...patch } : c));
   const deleteCaption = (id: string) => { setCaptions((projRef.current.captions || []).filter(c => c.id !== id)); setSelCaption(null); };
-  const editCaption = (id: string) => { setSelCaption(id); setStudioOpen(true); setCapFocus(k => k + 1); };
+  const editCaption = (id: string) => {
+    setSelCaption(id);
+    if ((projRef.current.captions || []).find(c => c.id === id)?.chord) { setChordOpen(true); return; }   // 코드표는 코드표 패널에서
+    setStudioOpen(true); setCapFocus(k => k + 1);
+  };
+  // ---------- 기타 코드표 (자막 줄에 들어가는 코드표) ----------
+  const chordCaps = captions.filter(c => c.chord);
+  /** 재생 위치에 코드표 넣기: 그 자리에 코드표가 있으면 그 코드로 바꾸고, 없으면 1마디(다음 코드표 전까지) 넣음 */
+  const placeChord = (name: string, v: number) => {
+    const p = projRef.current, caps = p.captions || [], t = tnow();
+    const here = caps.filter(c => c.chord && t >= c.start - 0.03 && t < c.end).pop();
+    if (here) { setCaptions(caps.map(c => c.id === here.id ? { ...c, text: name, chord: { name, v } } : c)); setSelCaption(here.id); return; }
+    let [a, b] = spanHere(1);
+    const next = caps.filter(c => c.chord && c.start > a + 1e-3).sort((x, y) => x.start - y.start)[0];
+    if (next && next.start < b) b = next.start;
+    const c: Caption = { id: 'ch' + Date.now().toString(36), start: a, end: Math.max(b, a + 0.3), text: name, chord: { name, v } };
+    setCaptions([...caps, c]); setSelCaption(c.id);
+    // 박에 맞춰 시작이 재생 위치보다 살짝 뒤면, 넣은 코드표가 바로 보이게 재생 위치를 그 안으로
+    if (t < a && !transportRef.current?.playing) seek(a + 0.005);
+  };
+  const chordPos = chordPosOf(project, ratio);
+  const setChordPos = (patch: Partial<ChordPos> | null) => {
+    const p = projRef.current, cp = { ...(p.chordPos || {}) };
+    if (patch) cp[ratio] = { ...chordPosOf(p, ratio), ...patch }; else delete cp[ratio];
+    setProject({ chordPos: cp });
+  };
   const selCap = captions.find(c => c.id === selCaption) || null;
+  const selChord = selCap?.chord ? selCap : null;
   useEffect(() => { setCapScope('one'); setPosScope('one'); }, [selCaption]);   // 다른 자막을 고르면 다시 '이 자막만'
   const capEditStyle = selCap ? styleFor(project, ratio, selCap) : capStyle;
   /** 글꼴·위치는 늘 공통, 나머지(색·테두리·그림자·상자·등장 효과)는 capScope대로 — 기본은 이 자막만 */
@@ -1544,6 +1574,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   };
   /** 미리보기에서 자막을 끌어 옮김 — 개별 스타일이 있으면 그 자막만, 아니면 공통 */
   const moveCaption = (id: string, x: number, y: number) => {
+    if ((projRef.current.captions || []).find(c => c.id === id)?.chord) { setChordPos({ x, y }); return; }   // 코드표는 모두 같이
     applyCapPatch({ x, y }, id);
   };
 
@@ -1852,15 +1883,29 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
       <main className="center">
         <div className="center-row">
         {studioOpen ? (
-          <CaptionStudio captions={captions} sel={selCap} onSelect={setSelCaption} onAdd={addCaption} onUpdate={updateCaption} onDelete={deleteCaption}
+          <CaptionStudio captions={captions.filter(c => !c.chord)} sel={selCap?.chord ? null : selCap} onSelect={setSelCaption} onAdd={addCaption} onUpdate={updateCaption} onDelete={deleteCaption}
             onSeek={seek} now={tnow} style={capEditStyle} scope={capScope} setScope={setCapScope} posScope={posScope} setPosScope={setPosScope} hasOwnPos={!!(selCap && ownPos(selCap, ratio))} onResetPos={resetCapPos} hasOwn={!!(selCap && ownLook(selCap))} onResetLook={resetCapLook} setStyle={setCapPatch}
             onClose={() => setStudioOpen(false)} focusKey={capFocus} disabled={!hasVideo} />
+        ) : chordOpen ? (
+          <ChordPanel sel={selChord} count={chordCaps.length} size={chordPos.size} disabled={!hasVideo}
+            onPlace={placeChord} onVoicing={v => selChord && updateCaption(selChord.id, { chord: { ...selChord.chord!, v } })}
+            onSize={s => setChordPos({ size: s })} onResetPos={() => setChordPos(null)} onDelete={() => selChord && deleteCaption(selChord.id)}
+            onClose={() => setChordOpen(false)} />
         ) : null}
         <div className="stage-wrap" ref={stageRef}>
-          {!studioOpen && !fsOn && (
-            <button type="button" className="studio-tab" onClick={() => setStudioOpen(true)} aria-expanded={false} aria-controls="cap-studio" title="자막 패널 열기">
-              <span className="st-ico" aria-hidden="true">T</span>자막{captions.length > 0 && <span className="st-n">{captions.length}</span>}<span className="st-arr" aria-hidden="true">▾</span>
-            </button>
+          {!fsOn && (!studioOpen || !chordOpen) && (
+            <div className="studio-tabs">
+              {!studioOpen && (
+                <button type="button" className="studio-tab" onClick={() => setStudioOpen(true)} aria-expanded={false} aria-controls="cap-studio" title="자막 패널 열기">
+                  <span className="st-ico" aria-hidden="true">T</span>자막{captions.length - chordCaps.length > 0 && <span className="st-n">{captions.length - chordCaps.length}</span>}<span className="st-arr" aria-hidden="true">▾</span>
+                </button>
+              )}
+              {!chordOpen && (
+                <button type="button" className="studio-tab chord-tab" onClick={() => setChordOpen(true)} aria-expanded={false} aria-controls="chord-panel" title="기타 코드표 넣기">
+                  <span className="st-ico" aria-hidden="true">♯</span>코드표{chordCaps.length > 0 && <span className="st-n">{chordCaps.length}</span>}<span className="st-arr" aria-hidden="true">▾</span>
+                </button>
+              )}
+            </div>
           )}
           {fsOn && <button type="button" className="fs-exit" onClick={() => document.exitFullscreen?.()}>전체화면 끝내기 (Esc)</button>}
           <Preview clean={fsOn} now={tnow} tlEnd={tlEnd} onPause={() => transportRef.current?.pause()} video={videoRef.current || document.createElement('video')} project={project} sheet={sheet}
@@ -1871,6 +1916,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             selCaption={selCaption} onSelectCaption={setSelCaption} onCaptionText={(id, text) => updateCaption(id, { text })}
             cropMode={cropMode} viewTrack={viewTrack} viewLabel={viewTrack ? `${viewNum}번 앵글 보는 중` : ''} onXf={(id, xf) => setProject({ frames: withXf(projRef.current, ratio, id, xf) })}
             levelGrid={levelGrid}
+            onEditChord={id => { setSelCaption(id); setChordOpen(true); }}
             onPip={pos => { const pp = { ...(projRef.current.pip || {}) }; if (pos) pp[ratio] = pos; else delete pp[ratio]; setProject({ pip: pp }); }} />
           <NeededFiles need={needList} onClose={() => setWant(null)} />
           {remoteEdit && (

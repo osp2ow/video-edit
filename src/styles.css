@@ -475,3 +475,18 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .src-bpm { flex-basis: 100%; display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .rot-row input[type=range] { flex: 1; }
 .replace-btn { cursor: pointer; }
+/* 자막·코드표 버튼 (미리보기 왼쪽 위) */
+.studio-tabs { position: absolute; top: 12px; left: 12px; z-index: 5; display: flex; gap: 8px; }
+.studio-tabs .studio-tab { position: static; }
+.studio-tab.chord-tab { border-color: rgba(150,225,170,0.45); color: #bdf0c9; }
+.stage-wrap:fullscreen .studio-tabs { display: none; }
+/* 코드표 패널 */
+.chord-roots { display: grid; grid-template-columns: repeat(6, 1fr); gap: 4px; }
+.chord-roots button { padding: 5px 0; border: 1px solid var(--line); border-radius: 6px; background: var(--bg); color: inherit; font: 700 12.5px var(--font); cursor: pointer; }
+.chord-roots button.on { background: #2f4a37; border-color: #8fdca4; color: #dff9e6; }
+.chord-grid, .chord-voicings { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; }
+.chord-btn { padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: #1e1b17; cursor: pointer; display: grid; place-items: center; }
+.chord-btn:hover:not(:disabled) { border-color: #8fdca4; }
+.chord-btn.on { border-color: #8fdca4; box-shadow: 0 0 0 1px #8fdca4 inset; background: #22302a; }
+.chord-btn:disabled { opacity: 0.45; cursor: default; }
+.chord-thumb { display: block; }

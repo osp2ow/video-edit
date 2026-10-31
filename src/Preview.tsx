@@ -30,7 +30,8 @@ interface Props {
   viewLabel: string;
   onXf: (id: string, xf: VideoXf) => void;
   onPip?: (pos: PipPos | null) => void;
-  levelGrid?: boolean;   // 수평 맞추기용 격자   // PIP 작은 화면 옮기기·크기 (null = 기본 자리로)
+  levelGrid?: boolean;   // 수평 맞추기용 격자
+  onEditChord?: (id: string) => void;   // 코드표 더블클릭 → 코드표 패널   // PIP 작은 화면 옮기기·크기 (null = 기본 자리로)
   onCaptionMove: (id: string, x: number, y: number) => void;
   onCardStyle?: (kind: 'intro' | 'outro', patch: Partial<CardStyle>) => void;
   onEditCard?: (kind: 'intro' | 'outro', page?: string) => void;
@@ -96,6 +97,7 @@ export function Preview(props: Props) {
     }
     const c = capHit(x, y);
     if (!c) return;
+    if (c.chord) { live.current.onEditChord?.(c.id); return; }   // 코드표는 글자 고치기 대신 코드표 패널
     live.current.onPause?.();
     const st = styleFor(live.current.project, live.current.ratio, c);
     const b = captionBox(canvasRef.current!.getContext('2d')!, W, H, c, st);

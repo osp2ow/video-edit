@@ -34,6 +34,9 @@
 - 앞쪽 빈 구간 자동 정리, 서서히 확대·자막 추가 위치 버그 수정
 - 자막 위치 '이 자막만' 따로
 - (10/24) 큰 영상 불러오기: 소리만 골라 읽음 → 1.7GB 2.9초→0.5초, 4GB 넘는 영상도 이제 분석됨 (예전엔 읽기 실패). 결과는 파일 전체 디코딩과 똑같음 (`test/audiofile.mjs 영상...`)
+- (10/31) 기타 코드표: src/chords.ts (12근음×15종류=180코드, 오픈 코드 목록 + 6·5·4번줄 근음 모양을 옮겨 만들고 chordProblems로 음 검사, 코드마다 운지 최대 3개). 코드표는 자막의 한 종류(Caption.chord = {name, v}, text = 코드 이름)라 타임라인 자막 줄(초록색)·복사·삭제·추출을 그대로 씀. 위치·크기는 Project.chordPos(비율별, 모든 코드표 공통), 미리보기에서 끌면 같이 움직임. 그리기 render.paintChord/chordGeom (가로 표, 위 = 1번줄, 왼쪽 굵은 선 = 줄받침, X/O, 바레, Nfr). 미리보기 왼쪽 위 '코드표' 버튼(자막 버튼 옆) → ChordPanel: 근음 탭 → 코드 누르면 재생 위치에 1마디(다음 코드표 전까지), 그 자리에 있으면 바꾸기, 운지·크기 (`test/chords_check.mjs`, `test/chords_ui.mjs`)
+  - 확인용 전체 코드표 페이지: https://claude.ai/artifact/LGPXo5VUSZdCUZUzTxADfo (만들기: test/review/chord_chart_entry.ts를 esbuild로 묶어 HTML에 넣음). 사용자가 운지 고쳐 달라고 하면 OPEN_CHORDS 또는 모양 표를 고치고 이 페이지도 다시 게시
+  - 손가락 번호는 사용자 요청으로 표시 안 함
 - (10/29) 연주 위치 네모 칸: 여유를 오선 한 칸의 0.6배로, 줄 아래 여백(inkExtent)은 1칸으로 → 손 순서 RL 글씨를 가리지 않고 감쌈 (`test/hlbox2.mjs`)
 - (10/29) 추가 파일 바꾸기: 영상 추가·녹음본 추가·악보 추가·앵글 목록에 '바꾸기'(App.ReplaceBtn) + 같은 이름을 다시 넣으면 거절 대신 그 항목을 새 파일로 바꿈(replaceSource/replaceRec/replaceSheet/replaceAngle). 타임라인 설정 유지, 다른 이름이면 그 이름을 쓰던 조각·줄이기·페이드·싱크·전환점 키를 새 이름으로 (`test/replace.mjs`)
 - (10/29) 악보 카드 높이: render.sheetMetrics가 줄 그림 전체 대신 inkExtent(오선에 붙은 잉크 + 바로 위·아래 글씨 한 줄, 멀리 떨어진 제목은 뺌)로 계산 → 첫 줄 제목 때문에 모든 줄 카드가 커지던 문제 해결

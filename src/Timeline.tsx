@@ -274,7 +274,8 @@ export function Timeline(props: Props) {
         const xa = X(c.start), xb = X(c.end);
         if (xb < 0 || xa > cw) continue;
         const sel = allSel.current || (!c.card && msel.current.has('cap:' + c.id)) || (c.card ? live.current.selCard === c.card : c.id === live.current.selCaption);
-        ctx.fillStyle = c.card ? (sel ? '#a9cbff' : 'rgba(127,178,255,0.8)') : sel ? '#ffd27a' : 'rgba(236,230,218,0.78)';
+        const isChord = !!(c as any).chord;   // 기타 코드표는 초록색
+        ctx.fillStyle = c.card ? (sel ? '#a9cbff' : 'rgba(127,178,255,0.8)') : isChord ? (sel ? '#c6f5d3' : 'rgba(150,225,170,0.82)') : sel ? '#ffd27a' : 'rgba(236,230,218,0.78)';
         ctx.beginPath(); ctx.roundRect(xa, C_Y + 2, Math.max(3, xb - xa), CROW - 4, 4); ctx.fill();
         if (sel) { ctx.strokeStyle = '#fff'; ctx.lineWidth = 1.5; ctx.stroke(); }
         const pgs = c.card === 'outro' ? cardPages(getFx(p).outro) : [];

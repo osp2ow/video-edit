@@ -276,7 +276,13 @@ export interface CaptionStyle {
   x: number; y: number;
   anim: CaptionAnim;
 }
-export interface Caption { id: string; start: number; end: number; text: string; style?: Partial<CaptionStyle>; pos?: Partial<Record<Ratio, { x: number; y: number }>> }   // pos: 이 자막만의 위치 (화면 비율별)
+export interface Caption { id: string; start: number; end: number; text: string; style?: Partial<CaptionStyle>; pos?: Partial<Record<Ratio, { x: number; y: number }>>; chord?: ChordRef }   // pos: 이 자막만의 위치 (화면 비율별) · chord: 글자 대신 기타 코드표 (text = 코드 이름)
+/** 자막 줄에 들어가는 기타 코드표: 코드 이름('Cm7') + 고른 운지 번호 */
+export interface ChordRef { name: string; v: number }
+/** 코드표 위치·크기 (모든 코드표 공통, 화면 비율별): x·y = 가운데 (화면 대비), size = 배율 */
+export interface ChordPos { x: number; y: number; size: number }
+export const defaultChordPos = (r: Ratio): ChordPos => r === '16:9' ? { x: 0.78, y: 0.32, size: 1 } : r === '4:5' ? { x: 0.5, y: 0.3, size: 1 } : { x: 0.5, y: 0.36, size: 1 };
+export const chordPosOf = (p: Project, r: Ratio): ChordPos => ({ ...defaultChordPos(r), ...((p.chordPos?.[r] || (r === '4:5' ? p.chordPos?.['9:16'] : undefined)) || {}) });
 const baseCaption: Omit<CaptionStyle, 'size' | 'x' | 'y'> = {
   font: 'IBM Plex Sans KR', weight: 700, letter: 0, lineH: 1.3, align: 'center',
   color: '#ffffff',
@@ -338,7 +344,8 @@ export interface Project {
   recFades?: Record<string, Fade>;   // 녹음본 조각별 페이드 인·아웃 (키는 trims와 같음: 'rec' · 'recx:…')
   trims?: Record<string, Trim>;   // 트랙별 쓰는 부분 (그 파일의 시간, 초) — 'main'·앵글 id·'rec'
   captionStyles: Record<Ratio, CaptionStyle>;
-  pip?: Partial<Record<Ratio, PipPos>>;   // PIP 작은 화면 위치·크기 (화면 비율별, 없으면 기본 자리)
+  pip?: Partial<Record<Ratio, PipPos>>;
+  chordPos?: Partial<Record<Ratio, ChordPos>>;   // 코드표 위치·크기 (공통)   // PIP 작은 화면 위치·크기 (화면 비율별, 없으면 기본 자리)
   fx: Fx;
   sheetOffset: number;  // 악보 표기 이동(마디). +1이면 악보 첫 마디가 한 마디 늦게, -1이면 한 마디 일찍 (못갖춘마디용)
 }

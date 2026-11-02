@@ -185,21 +185,56 @@ function buf(i: number, W: number, H: number) {
 
 /** 영상 조각이 바뀌는 곳(앞 조각 끝 = 뒤 조각 시작)의 장면 전환 — 효과 탭의 장면 전환 설정을 씀.
  *  전환 동안 앞 조각은 끝 장면에서, 뒤 조각은 첫 장면에서 멈춘 채로 섞임 */
-export function clipTransitionAt(p: Project, t: number, dur: number): { type: TransType; k: number; A: Clip; B: Clip; tA: number; tB: number } | null {
+export function clipTransitionAt(p: Project, t: number, dur: number, ahead = 0): { type: TransType; k: number; A: Clip; B: Clip; tA: number; tB: number } | null {
   const fx = getFx(p);
-  if (fx.trType === 'cut' || !(fx.trDur > 0)) return null;
   const cs = clipsOf(p, dur);
   if (cs.length < 2) return null;
   for (const B of cs) {
+    const tr = clipTrOf(p, B);
+    if (!tr) continue;
     const A = cs.find(x => x !== B && Math.abs(clipEnd(x) - B.start) < 0.05 && x.start < B.start);
     if (!A) continue;
-    const d = Math.min(fx.trDur, (clipEnd(A) - A.start), (clipEnd(B) - B.start));
-    if (t >= B.start - d / 2 && t < B.start + d / 2) {
+    const d = Math.min(tr.dur, (clipEnd(A) - A.start), (clipEnd(B) - B.start));
+    if (t >= B.start - d / 2 - ahead && t < B.start + d / 2) {
       const eps = 1 / 60;
-      return { type: fx.trType, k: (t - (B.start - d / 2)) / d, A, B, tA: Math.min(t, clipEnd(A) - eps), tB: Math.max(t, B.start + eps) };
+      return { type: tr.type, k: Math.max(0, (t - (B.start - d / 2)) / d), A, B, tA: Math.min(t, clipEnd(A) - eps), tB: Math.max(t, B.start + eps) };
     }
   }
+  void fx;
   return null;
+}
+/** 이 조각으로 들어올 때의 장면 전환 (조각마다 정한 것 → 없으면 효과 탭 기본값, '바로'면 없음) */
+export function clipTrOf(p: Project, B: Clip): { type: TransType; dur: number } | null {
+  const fx = getFx(p), tr = B.trIn || { type: fx.trType, dur: fx.trDur };
+  return tr.type === 'cut' || !(tr.dur > 0) ? null : tr;
+}
+
+// ---------- 같은 영상을 자른 두 조각 사이 전환 (미리보기) ----------
+// 영상 하나(<video>)로는 앞 조각 끝 장면과 뒤 조각 첫 장면을 동시에 보여줄 수 없어서,
+// 같은 파일을 연 숨은 영상을 하나 더 두고 '지금 재생 중이 아닌 쪽' 장면을 거기서 꺼냄
+const peeks = new WeakMap<HTMLVideoElement, HTMLVideoElement>();
+let peekHolder: HTMLDivElement | null = null;
+function peekOf(el: HTMLVideoElement, at: number): HTMLVideoElement | null {
+  const src = el.currentSrc || el.src; if (!src) return null;
+  let v = peeks.get(el);
+  if (!v || v.src !== src) {
+    if (!peekHolder) { peekHolder = document.createElement('div'); peekHolder.style.cssText = 'position:absolute;width:1px;height:1px;overflow:hidden;opacity:0;pointer-events:none;left:0;top:0'; document.body.appendChild(peekHolder); }
+    v?.remove();
+    v = document.createElement('video'); v.muted = true; v.playsInline = true; v.preload = 'auto'; v.src = src;
+    peekHolder.appendChild(v); peeks.set(el, v);
+  }
+  if (v.readyState >= 1 && Math.abs(v.currentTime - at) > 0.04 && !v.seeking) v.currentTime = at;
+  return v.readyState >= 2 && !v.seeking && Math.abs(v.currentTime - at) < 0.1 ? v : null;
+}
+/** 같은 영상 파일 두 조각이면, 재생 중이 아닌 쪽(t가 뒤 조각에 들어왔으면 앞 조각, 아니면 뒤 조각)에 쓸 장면 */
+function peekEnv(env: Env, c: Clip, tt: number): Env | null {
+  if (env.frames) return null;   // 추출(파일에서 직접 풀기)은 장면을 따로 받음
+  const el = c.src ? env.sources?.get(c.src) : env.master;
+  if (!el) return null;
+  const v = peekOf(el, c.srcIn + (tt - c.start));
+  if (!v) return null;
+  if (!c.src) return { ...env, master: Object.assign(v, {}) as HTMLVideoElement };
+  const m = new Map(env.sources); m.set(c.src, v); return { ...env, sources: m };
 }
 
 /** 지금 시점의 전환 (없으면 null) */
@@ -221,10 +256,18 @@ function drawProgram(ctx: CanvasRenderingContext2D, W: number, H: number, t: num
   if (!tr) {
     // 영상 조각 사이 장면 전환
     const ct = clipTransitionAt(env.project, t, env.master.duration || 0);
-    if (!ct) { drawSource(ctx, W, H, angleAt(env.project.cuts, t), t, env); return; }
+    if (!ct) {
+      // 같은 영상 조각 사이 전환이 곧 오면 숨은 영상을 미리 그 자리로 (전환이 시작될 때 장면이 준비돼 있게)
+      if (!env.frames) { const up = clipTransitionAt(env.project, t, env.master.duration || 0, 1.5); if (up && (up.A.src || '') === (up.B.src || '')) peekEnv(env, up.B, up.B.start + 1 / 60); }
+      drawSource(ctx, W, H, angleAt(env.project.cuts, t), t, env); return;
+    }
     const a = buf(0, W, H), b = buf(1, W, H);
-    drawSource(a, W, H, angleAt(env.project.cuts, ct.tA), ct.tA, env.framesFrom ? { ...env, frames: env.framesFrom } : env);
-    drawSource(b, W, H, angleAt(env.project.cuts, ct.tB), ct.tB, env);
+    const same = (ct.A.src || '') === (ct.B.src || '');
+    // 같은 영상이면: 뒤 조각에 들어오기 전엔 뒤 조각 첫 장면을, 들어온 뒤엔 앞 조각 끝 장면을 숨은 영상에서
+    const envA = env.framesFrom ? { ...env, frames: env.framesFrom } : same && t >= ct.B.start ? (peekEnv(env, ct.A, ct.tA) || env) : env;
+    const envB = same && t < ct.B.start ? (peekEnv(env, ct.B, ct.tB) || env) : env;
+    drawSource(a, W, H, angleAt(env.project.cuts, ct.tA), ct.tA, envA);
+    drawSource(b, W, H, angleAt(env.project.cuts, ct.tB), ct.tB, envB);
     blendTransition(ctx, W, H, a.canvas, b.canvas, ct.type, ct.k);
     return;
   }

@@ -2169,6 +2169,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
           onClips={list => setProject({ clips: list, skips: [], trims: { ...(projRef.current.trims || {}), main: undefined as any } })}
           onCycle={c => setProject({ cycle: c || undefined })}
           onTrim={(id, tr) => setProject({ trims: { ...(projRef.current.trims || {}), [id]: tr } })}
+          onClipTr={(id, tr) => { const p = projRef.current; setProject({ clips: clipsOf(p, masterDur()).map(c => { if (c.id !== id) return c; const n = { ...c }; if (tr) n.trIn = tr; else delete n.trIn; return n; }), skips: [] }); }}
           onFade={(key, f) => {
             const p = projRef.current;
             if (key.startsWith('clip:')) setProject({ clips: clipsOf(p, masterDur()).map(c => c.id === key.slice(5) ? { ...c, fadeIn: f.in, fadeOut: f.out } : c), skips: [] });

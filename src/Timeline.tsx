@@ -58,6 +58,7 @@ interface Props {
   srcDurOf?: (src?: string) => number;          // 영상 파일별 길이
   srcLabelOf?: (src?: string) => string;        // 영상 파일 이름 (조각 위에 표시)
   recExtras?: { key: string; src: string; name: string; at: number; track: Track | null; dur: number }[];   // 녹음본 조각들 (추가 녹음본 · 잘라서 생긴 조각)
+  onClipTr?: (clipId: string, tr: { type: TransType; dur: number } | null) => void;   // 앞 조각에서 이 조각으로 넘어갈 때 장면 전환 (null = 효과 탭 기본값)
   onFade?: (key: string, f: Fade) => void;   // 페이드 인·아웃: 녹음본 조각('rec'·'recx:…') · 영상 조각('clip:id')
   onSplitRec?: (t: number, key: string | null) => string | null;   // 녹음본 자르기 (I) → 새 조각 키
   onDeleteRec?: (key: string) => void;                              // 녹음본 조각 지우기
@@ -121,6 +122,7 @@ export function Timeline(props: Props) {
   const scrollY = useRef(0);
   // 결과물 줄의 앵글 구간을 누르면 뜨는 메뉴 (구간 삭제 · 들어갈/나올 때 장면 전환)
   const [segMenu, setSegMenuS] = useState<{ i: number; x: number; y: number } | null>(null);
+  const [trMenu, setTrMenu] = useState<{ id: string; x: number; y: number } | null>(null);   // 맞닿은 영상 조각 사이 장면 전환 고르기
   const segMenuRef = useRef<{ i: number; x: number; y: number } | null>(null);
   const setSegMenu = (m: { i: number; x: number; y: number } | null) => { segMenuRef.current = m; setSegMenuS(m); };
   const pendingSeg = useRef<number | null>(null);
@@ -454,6 +456,20 @@ export function Timeline(props: Props) {
               ctx.beginPath(); ctx.rect(Math.round(hx) - 4, top + 1, 8, 8); ctx.fill(); ctx.stroke();
             }
           }
+          // 앞 조각과 맞닿은 곳: 가운데 동그란 버튼 (누르면 장면 전환 고르기) · 전환이 걸려 있으면 나비 모양을 채워서
+          if (r.id === 'main' && segs.some(x => x !== c && Math.abs(clipEnd(x) - c.start) < 0.05 && x.start < c.start)) {
+            const fxs = getFx(p), tr = c.trIn || { type: fxs.trType, dur: fxs.trDur }, on = tr.type !== 'cut';
+            const bx = X(c.start), by = y + ROW / 2, s = 4.5, hot = junctionHover.current === c.id || trMenuRef.current === c.id;
+            if (bx > -10 && bx < cw + 10) {
+              ctx.save();
+              ctx.fillStyle = hot ? '#3a3226' : 'rgba(20,18,15,0.85)'; ctx.strokeStyle = on ? (c.trIn ? '#c9b8ff' : 'rgba(255,255,255,0.8)') : 'rgba(255,255,255,0.45)'; ctx.lineWidth = 1.3;
+              ctx.beginPath(); ctx.arc(bx, by, 9, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+              ctx.fillStyle = on ? (c.trIn ? '#c9b8ff' : 'rgba(255,255,255,0.9)') : 'rgba(255,255,255,0.45)';
+              ctx.beginPath(); ctx.moveTo(bx - s, by - s); ctx.lineTo(bx, by); ctx.lineTo(bx - s, by + s); ctx.closePath(); ctx.moveTo(bx + s, by - s); ctx.lineTo(bx, by); ctx.lineTo(bx + s, by + s); ctx.closePath();
+              if (on) ctx.fill(); else { ctx.strokeStyle = ctx.fillStyle; ctx.lineWidth = 1; ctx.stroke(); }
+              ctx.restore();
+            }
+          }
           // 테두리 · 양쪽 손잡이
           const hot = clipHover.current && clipHover.current.id === r.id && clipHover.current.clip === c.id;
           ctx.strokeStyle = selClip ? '#fff' : hexA(r.col, sel || hot ? 0.95 : 0.55); ctx.lineWidth = selClip ? 2 : sel || hot ? 1.5 : 1;
@@ -757,6 +773,21 @@ export function Timeline(props: Props) {
     const p = live.current.project;
     if (key.startsWith('clip:')) { const c = clipsOf(p, live.current.srcDur).find(x => x.id === key.slice(5)); return c ? clipFade(c) : { in: 0, out: 0 }; }
     return fadeOf(p, key, len);
+  };
+  const junctionHover = useRef<string | null>(null);
+  const trMenuRef = useRef<string | null>(null); trMenuRef.current = trMenu?.id || null;
+  /** 맞닿은 영상 조각 경계의 동그란 버튼을 눌렀는지 → 뒤 조각 */
+  const junctionAt = (clientX: number, clientY: number): Clip | null => {
+    if (!live.current.onClipTr || trackAt(clientY) !== 'main') return null;
+    const r = canvas.current!.getBoundingClientRect(), v = view.current;
+    const mid = RULER + ROWS_Y + ROW / 2 - scrollY.current, x = clientX - r.left, y = clientY - r.top;
+    if (Math.abs(y - mid) > 11) return null;
+    const cs = clipsOf(live.current.project, live.current.srcDur);
+    for (const c of cs) {
+      if (!cs.some(o => o !== c && Math.abs(clipEnd(o) - c.start) < 0.05 && o.start < c.start)) continue;
+      if (Math.abs((c.start - v.start) * v.pps - x) <= 11) return c;
+    }
+    return null;
   };
   /** 녹음본·영상 조각 위쪽의 페이드 손잡이 근처인지 */
   const fadeHandleAt = (clientX: number, clientY: number) => {
@@ -1230,6 +1261,12 @@ export function Timeline(props: Props) {
       seeking.current = true; seekAt(e);
       return;
     }
+    // 맞닿은 영상 조각 경계 버튼: 장면 전환 고르기
+    {
+      const jc = junctionAt(e.clientX, e.clientY);
+      if (jc) { live.current.onSelect('main'); pickClip(jc); setTrMenu({ id: jc.id, x: e.clientX, y: e.clientY }); force(n => n + 1); return; }
+      if (trMenu) setTrMenu(null);
+    }
     // 녹음본 페이드 손잡이: 끌어서 페이드 길이
     {
       const fh = fadeHandleAt(e.clientX, e.clientY);
@@ -1354,6 +1391,11 @@ export function Timeline(props: Props) {
       tip.current = { text: `페이드 ${d.edge === 'in' ? '인' : '아웃'} ${(d.edge === 'in' ? next.in : next.out).toFixed(2)}초`, x: e.clientX };
       e.currentTarget.style.cursor = 'ew-resize';
       return;
+    }
+    if (!e.buttons) {
+      const jc = junctionAt(e.clientX, e.clientY);
+      junctionHover.current = jc?.id || null;
+      if (jc) { e.currentTarget.style.cursor = 'pointer'; return; }
     }
     if (!e.buttons) {
       const fh = fadeHandleAt(e.clientX, e.clientY), prev = fadeHover.current;
@@ -1783,6 +1825,24 @@ export function Timeline(props: Props) {
           const f = fadeFor(pc.key, pc.b - pc.a);
           return <FadeBox key={pc.key} fade={f} max={pc.b - pc.a} onFade={nf => props.onFade!(pc.key, nf)} />;
         })()}
+        {props.onClipTr && props.selected === 'main' && selClipRef.current && (() => {
+          // 고른 영상 조각과 바로 앞 조각(맞닿은 것) 사이의 장면 전환
+          const cs = clipsOf(props.project, props.srcDur), c = cs.find(x => x.id === selClipRef.current);
+          const prev = c && cs.find(x => x !== c && Math.abs(clipEnd(x) - c.start) < 0.05 && x.start < c.start);
+          if (!c || !prev) return null;
+          const fxs = getFx(props.project), cur = c.trIn;
+          return (
+            <span className="tl-fade tl-tr" title="바로 앞 조각에서 이 조각으로 넘어갈 때의 장면 전환. '기본'은 효과 탭의 장면 전환을 따라요">
+              <label className="tl-bpm" htmlFor="clip-tr"><span>앞 조각과 전환</span>
+                <select id="clip-tr" value={cur ? cur.type : ''} onChange={e => { const v = e.target.value as TransType | ''; props.onClipTr!(c.id, v ? { type: v, dur: cur?.dur || fxs.trDur || 0.5 } : null); }} onKeyDown={e => e.stopPropagation()}>
+                  <option value="">기본 ({TRANS_LIST.find(([k]) => k === fxs.trType)?.[1] || '바로'})</option>
+                  {TRANS_LIST.map(([k, n]) => <option key={k} value={k}>{n}</option>)}
+                </select>
+              </label>
+              {cur && cur.type !== 'cut' && <FadeNum id="clip-tr-dur" label="길이" v={cur.dur} max={2} set={n => props.onClipTr!(c.id, { type: cur.type, dur: Math.max(0.1, Math.min(2, n || 0.5)) })} />}
+            </span>
+          );
+        })()}
         {props.hasSheet && props.project.sheetClips && <button type="button" className="btn ghost sm" onClick={() => { selSheet.current = null; props.onSheetClips(null); }} title="악보 조각 편집을 지우고 1마디부터 악보 전체로 다시 넣기">악보 처음대로</button>}
         <div className="tl-zoom">
           <button type="button" className="btn ghost sm" onClick={() => zoom(1 / 1.6)} aria-label="축소" title="가로 축소 (Cmd/Ctrl+←) · 세로는 Cmd/Ctrl+↑↓">−</button>
@@ -1796,6 +1856,9 @@ export function Timeline(props: Props) {
       {markMenu && getFx(props.project).punches.some(m => m.id === markMenu.id) && (
         <MarkMenu {...markMenu} project={props.project} onFxItems={props.onFxItems} onSeek={props.onSeek}
           onClose={() => setMarkMenu(null)} onDeleted={() => { setMarkMenu(null); props.onSelectFx(null); }} />
+      )}
+      {trMenu && props.onClipTr && clipsOf(props.project, props.srcDur).some(c => c.id === trMenu.id) && (
+        <ClipTrMenu {...trMenu} project={props.project} srcDur={props.srcDur} onTr={props.onClipTr} onClose={() => setTrMenu(null)} />
       )}
       {segMenu && props.project.cuts[segMenu.i] && <SegMenu {...segMenu} project={props.project} info={props.angleInfo} onCuts={props.onCuts} onClose={() => setSegMenu(null)} />}
     </div>
@@ -1860,6 +1923,41 @@ function hexA(hex: string, a: number) {
   const m = hex.replace('#', '');
   const n = parseInt(m.length === 3 ? m.split('').map(x => x + x).join('') : m, 16);
   return `rgba(${(n >> 16) & 255},${(n >> 8) & 255},${n & 255},${a})`;
+}
+
+/** 맞닿은 영상 조각 사이 장면 전환 고르기 (경계 버튼을 누르면 뜸) */
+function ClipTrMenu({ id, x, y, project, srcDur, onTr, onClose }: { id: string; x: number; y: number; project: Project; srcDur: number; onTr: NonNullable<Props['onClipTr']>; onClose: () => void }) {
+  const box = useRef<HTMLDivElement>(null);
+  const left = Math.max(8, Math.min(window.innerWidth - 374, x - 170));
+  const bottom = Math.max(8, window.innerHeight - y + 16);
+  useEffect(() => {
+    const away = (e: PointerEvent) => { if (box.current && !box.current.contains(e.target as Node) && !(e.target as HTMLElement).closest?.('.tl-canvas')) onClose(); };
+    const key = (e: KeyboardEvent) => { if (e.key === 'Escape') { e.stopPropagation(); onClose(); } };
+    window.addEventListener('pointerdown', away, true); window.addEventListener('keydown', key, true);
+    return () => { window.removeEventListener('pointerdown', away, true); window.removeEventListener('keydown', key, true); };
+  }, []);
+  const c = clipsOf(project, srcDur).find(k => k.id === id)!, fx = getFx(project);
+  const cur = c.trIn, type = cur ? cur.type : null, dur = cur?.dur || fx.trDur || 0.5;
+  const defName = TRANS_LIST.find(([k]) => k === fx.trType)?.[1] || '바로';
+  return (
+    <div ref={box} className="seg-menu" style={{ left, bottom }} role="dialog" aria-label="장면 전환">
+      <div className="sm-head">
+        <b className="small">장면 전환</b>
+        <span className="small dim mono">{c.start.toFixed(2)}초</span>
+        <button type="button" className="btn ghost xs" onClick={onClose} aria-label="닫기">✕</button>
+      </div>
+      <div className="chips">
+        <button type="button" className={type === null ? 'on' : ''} onClick={() => onTr(id, null)} title="효과 탭의 장면 전환을 따라요">기본 ({defName})</button>
+        {TRANS_LIST.map(([t, n]) => <button key={t} type="button" className={type === t ? 'on' : ''} onClick={() => onTr(id, { type: t, dur })}>{n}</button>)}
+      </div>
+      {type && type !== 'cut' && (
+        <div className="field">
+          <label htmlFor="ctm-dur">전환 길이 <span className="mono dim">{dur.toFixed(2)}초</span></label>
+          <input id="ctm-dur" type="range" min={0.2} max={2} step={0.05} value={dur} onChange={e => onTr(id, { type, dur: parseFloat(e.target.value) })} />
+        </div>
+      )}
+    </div>
+  );
 }
 
 function SegMenu({ i, x, y, project, info, onCuts, onClose }: { i: number; x: number; y: number; project: Project; info: Props['angleInfo']; onCuts: (c: Cut[]) => void; onClose: () => void }) {

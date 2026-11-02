@@ -499,3 +499,4 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .chord-lib-del { position: absolute; top: 3px; right: 3px; width: 20px; height: 20px; border-radius: 50%; border: 1px solid var(--line); background: var(--panel); color: var(--muted); cursor: pointer; font-size: 13px; line-height: 1; display: grid; place-items: center; opacity: 0; }
 .chord-lib-item:hover .chord-lib-del, .chord-lib-del:focus-visible { opacity: 1; }
 .sec-lib { display: grid; gap: 6px; }
+.tl-tr select { background: var(--bg); color: inherit; border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; font: 500 12px var(--font); }

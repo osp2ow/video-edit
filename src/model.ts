@@ -41,7 +41,7 @@ export function cardSpan(fx: Fx, kind: 'intro' | 'outro', r0: number, r1: number
 }
 export interface Skip { id: string; start: number; end: number }
 /** 기준 영상 조각: 타임라인 start부터, 영상 파일의 [srcIn, srcOut] 부분을 재생 */
-export interface Clip { id: string; start: number; srcIn: number; srcOut: number; src?: string; fadeIn?: number; fadeOut?: number }   // src: 어느 영상 파일인지 (없으면 첫 영상) · fadeIn/Out: 조각 앞뒤 페이드(초, 화면은 검게 · 소리는 작게)
+export interface Clip { id: string; start: number; srcIn: number; srcOut: number; src?: string; fadeIn?: number; fadeOut?: number; trIn?: { type: TransType; dur: number } }   // trIn: 바로 앞 조각에서 이 조각으로 넘어갈 때 장면 전환 (없으면 효과 탭 기본값)   // src: 어느 영상 파일인지 (없으면 첫 영상) · fadeIn/Out: 조각 앞뒤 페이드(초, 화면은 검게 · 소리는 작게)
 export const clipEnd = (c: Clip) => c.start + (c.srcOut - c.srcIn);
 /** 영상 조각의 페이드 (조각보다 길면 비율대로 줄임) */
 export function clipFade(c: Clip): { in: number; out: number } {

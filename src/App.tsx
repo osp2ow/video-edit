@@ -237,6 +237,11 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
       if (!id && creating.current) id = await creating.current.catch(() => null);
       if (!id) { pending.current.set(role, file); return; }
       setTransfer({ kind: 'up', name: file.name, pct: 0 });
+      if (file.size >= 4 * 1024 ** 3) {
+        // 클라우드 규칙상 4GB 이상은 못 올림 → 다른 컴퓨터에서는 이 파일을 직접 넣어야 함
+        setMsg({ kind: 'warn', text: `${file.name}은 ${(file.size / 1024 ** 3).toFixed(1)}GB라 클라우드에 올릴 수 없어요 (4GB까지). 다른 컴퓨터에서 이 프로젝트를 열면 이 파일은 직접 넣어 주세요.` });
+        return;
+      }
       try {
         const ref = await cloud.uploadFile(file, pct => setTransfer({ kind: 'up', name: file.name, pct }));
         if (currentRef.current !== id) return;
@@ -295,6 +300,12 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   // ---------- 파일 ----------
   const loadVideo = async (file: File, keep = false) => {
     const v = videoRef.current!;
+    // 열어 둔 프로젝트에 기준 영상이 아직 없으면(다른 컴퓨터에서 연 프로젝트의 영상을 못 받았을 때 등) 이름이 달라도 그 프로젝트에 넣음,
+    // 같은 이름 영상을 다시 넣어도 그대로 이어서 — 설정·추가 영상·녹음본을 지우지 않게
+    if (!keep && currentRef.current) {
+      const cur = projects.find(d => d.id === currentRef.current);
+      if (!masterFile.current || (cur && cur.videoName === file.name)) keep = true;
+    }
     transportRef.current?.pause(); v.pause();
     setHasVideo(false); setVTrack(null); setDuration(0);
     setVideoName(file.name);
@@ -321,7 +332,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     }
     // 같은 파일을 다시 열면 지난 설정 복원 (클라우드 프로젝트를 다시 여는 중이면 건너뜀)
     const saved = keep ? null : store.get<Project | null>('pve.proj:' + file.name, null as any);
-    if (keep) { if (wantRef.current?.videoName !== file.name) unlockAuto(); }
+    if (keep) { /* 열어 둔 프로젝트의 템포·마디·싱크를 그대로 둠 (다시 자동으로 찾지 않음) */ }
     else if (saved && (saved as any).bpm) {
       const sp = { ...defaultProject(), ...saved };
       delete (sp as any).pickupBeats; delete (sp as any).pickupMode;
@@ -1087,7 +1098,13 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
       if (openToken.current !== token) return;
       setTransfer({ kind: 'down', name: r.name, pct: 0 });
       try {
-        const file = await cloud.downloadFile(r, pct => setTransfer({ kind: 'down', name: r.name, pct }));
+        // 인터넷이 잠깐 끊기는 경우가 있어서 두 번까지 다시 받아 봄
+        let file: File | null = null, err: any = null;
+        for (let k = 0; k < 3 && !file; k++) {
+          try { file = await cloud.downloadFile(r, pct => setTransfer({ kind: 'down', name: r.name, pct })); }
+          catch (e) { err = e; if (openToken.current !== token) return; await new Promise(res => setTimeout(res, 1500 * (k + 1))); }
+        }
+        if (!file) throw err;
         if (openToken.current !== token) return;
         fromCloud.current.add(file);
         if (role === 'video') loadVideo(file, true);
@@ -1097,8 +1114,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
         else if (role === 'sheetx') await addSheet(file, true);
         else if (role === 'recx') await addRec(file, true);
         else await loadSheet(file);
-      } catch {
-        setMsg({ kind: 'warn', text: `${r.name}을(를) 클라우드에서 내려받지 못했어요. 직접 넣어주세요.` });
+      } catch (e: any) {
+        console.warn('[클라우드] 내려받기 실패', r.name, e);
+        setMsg({ kind: 'warn', text: `${r.name}을(를) 클라우드에서 내려받지 못했어요 (${e?.code || e?.message || '알 수 없는 오류'}). 이 컴퓨터에 있는 같은 파일을 왼쪽 칸에 넣으면 이 프로젝트에 그대로 들어가요.` });
       }
     }
     setTransfer(null);

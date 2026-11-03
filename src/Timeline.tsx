@@ -834,7 +834,17 @@ export function Timeline(props: Props) {
   const msel = useRef<Set<string>>(new Set());
   const marquee = useRef<{ x0: number; y0: number; x1: number; y1: number; base: Set<string> } | null>(null);
   const isSel = (k: string) => allSel.current || msel.current.has(k);
-  const groupDrag = useRef<{ x0: number; P0: Project; moved: boolean; sel?: Set<string> } | null>(null);
+  const groupDrag = useRef<{ x0: number; P0: Project; moved: boolean; sel?: Set<string>; key?: string } | null>(null);
+  /** 요소 하나만 고르기 (여러 개 고른 상태에서 하나를 끌지 않고 눌렀을 때) */
+  const selectOne = (k: string) => {
+    const i = k.indexOf(':'), kind = k.slice(0, i), id = k.slice(i + 1), lp = live.current;
+    selSheet.current = null;
+    if (kind === 'rec') { pickClip(null); lp.onSelect('rec'); selRecRef.current = id; }
+    else if (kind === 'clip') { lp.onSelect('main'); pickClip(clipsOf(lp.project, lp.srcDur).find(c => c.id === id) || null); }
+    else if (kind === 'cap') lp.onSelectCaption(id);
+    else if (kind === 'sheet') { pickClip(null); selSheet.current = id; }
+    else if (kind === 'zoom' || kind === 'punch') lp.onSelectFx({ kind, id } as any);
+  };
   /** 전체(sel 없음) 또는 고른 것들(sel)을 q초만큼 옮기는 변경 */
   const groupPatch = (P0: Project, q0: number, sel?: Set<string>): { patch: Partial<Project>; q: number } => {
     const lp = live.current, fx = getFx(P0), dur = lp.duration || 0;
@@ -1235,10 +1245,23 @@ export function Timeline(props: Props) {
       marquee.current = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, base: next };
       return;
     }
-    // 여러 개 고른 상태: 고른 것 중 하나를 잡고 끌면 같이 이동 · 다른 곳을 누르면 풀림
+    // 페이드 손잡이 (녹음본·영상 조각 위쪽 양 끝): 여러 개 고른 상태(붙여넣은 직후 등)에서도 먼저 잡힘
+    if (!live.current.pick) {
+      const fh = fadeHandleAt(e.clientX, e.clientY);
+      if (fh) {
+        msel.current = new Set(); allSel.current = false;
+        selSheet.current = null;
+        if (fh.key.startsWith('clip:')) { live.current.onSelect('main'); pickClip(clipsOf(live.current.project, live.current.srcDur).find(c => c.id === fh.key.slice(5)) || null); }
+        else { live.current.onSelect('rec'); selRecRef.current = fh.key; }
+        fadeDrag.current = { key: fh.key, edge: fh.edge, a: fh.a, b: fh.b };
+        force(n => n + 1);
+        return;
+      }
+    }
+    // 여러 개 고른 상태: 고른 것 중 하나를 잡고 끌면 같이 이동 · 끌지 않고 놓으면 그것 하나만 고름 · 다른 곳을 누르면 풀림
     if (msel.current.size) {
       const k = itemKeyAt(e.clientX, e.clientY);
-      if (k && msel.current.has(k)) { groupDrag.current = { x0: e.clientX, P0: live.current.project, moved: false, sel: new Set(msel.current) }; return; }
+      if (k && msel.current.has(k)) { groupDrag.current = { x0: e.clientX, P0: live.current.project, moved: false, sel: new Set(msel.current), key: k }; return; }
       msel.current = new Set(); force(n => n + 1);
     }
     if (allSel.current) {
@@ -1287,18 +1310,6 @@ export function Timeline(props: Props) {
       const jc = junctionAt(e.clientX, e.clientY);
       if (jc) { live.current.onSelect('main'); pickClip(jc); setTrMenu({ id: jc.id, x: e.clientX, y: e.clientY }); force(n => n + 1); return; }
       if (trMenu) setTrMenu(null);
-    }
-    // 녹음본 페이드 손잡이: 끌어서 페이드 길이
-    {
-      const fh = fadeHandleAt(e.clientX, e.clientY);
-      if (fh) {
-        selSheet.current = null;
-        if (fh.key.startsWith('clip:')) { live.current.onSelect('main'); pickClip(clipsOf(live.current.project, live.current.srcDur).find(c => c.id === fh.key.slice(5)) || null); }
-        else { live.current.onSelect('rec'); selRecRef.current = fh.key; }
-        fadeDrag.current = { key: fh.key, edge: fh.edge, a: fh.a, b: fh.b };
-        force(n => n + 1);
-        return;
-      }
     }
     // 조각 양 끝: 끌어서 줄이기·늘리기
     {
@@ -1724,7 +1735,7 @@ export function Timeline(props: Props) {
     }
     if (groupDrag.current) {
       const d = groupDrag.current; groupDrag.current = null;
-      if (!d.moved) { if (d.sel) msel.current = new Set(); else allSel.current = false; force(n => n + 1); }
+      if (!d.moved) { if (d.sel) { msel.current = new Set(); if (d.key) selectOne(d.key); } else allSel.current = false; force(n => n + 1); }
       return;
     }
     if (rulerDown.current) { rulerDown.current = null; return; }

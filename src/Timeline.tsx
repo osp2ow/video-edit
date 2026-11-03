@@ -1052,7 +1052,11 @@ export function Timeline(props: Props) {
       return;
     }
     const cut = c.srcIn + (t - c.start), id2 = 'c' + Date.now().toString(36);
-    lp.onClips(cs.flatMap(x => x.id === c!.id ? [{ ...x, srcOut: cut }, { id: id2, start: t, srcIn: cut, srcOut: x.srcOut }] : [x]));
+    // 뒤 조각도 같은 영상 파일(src)을 가리켜야 함 (예전에는 src가 빠져서 추가한 영상을 자르면 뒤 조각이 첫 영상으로 바뀌었음)
+    // 페이드: 앞 조각은 페이드 인만, 뒤 조각은 페이드 아웃만 이어받음 · 장면 전환은 앞 조각 쪽에만
+    const a: Clip = { ...c, srcOut: cut }, b: Clip = { ...c, id: id2, start: t, srcIn: cut };
+    delete a.fadeOut; delete b.fadeIn; delete b.trIn;
+    lp.onClips(cs.flatMap(x => x.id === c!.id ? [a, b] : [x]));
     selClipRef.current = id2;
   };
   // 고른 악보 구간은 Delete로 지움

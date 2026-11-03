@@ -70,6 +70,9 @@ export class Transport {
       if (Math.abs((meta?.mediaTime ?? v.currentTime) - s) < 0.08) release();
       else if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(check);
     };
+    // 위치 찾는 데 걸린 시간을 기억 (무거운 영상은 그만큼 앞을 찾아야 시계를 따라잡음)
+    const t0 = performance.now();
+    el.addEventListener('seeked', () => { v.__seekLat = Math.min(1.5, (performance.now() - t0) / 1000); }, { once: true });
     el.currentTime = s;
     if (v.requestVideoFrameCallback) v.requestVideoFrameCallback(check);
     else el.addEventListener('seeked', release, { once: true });
@@ -133,14 +136,17 @@ export class Transport {
       const s = c.srcIn + (t - c.start);
       // 영상 조각 페이드: 그 영상 소리도 같이 작게
       if (!p.videoMuted) { const vol = Math.max(0, Math.min(1, p.videoVol * clipFadeAt(c, t))); if (Math.abs(el.volume - vol) > 0.004) el.volume = vol; }
+      const lead = Math.min(1.5, (el as any).__seekLat || 0);   // 위치 찾는 동안 시계가 흘러갈 만큼 앞을 찾음
       if (el.paused || el.ended) {
-        if (Math.abs(el.currentTime - s) > 0.04) this.jump(el, s);
+        // 다른 영상으로 막 넘어온 순간: 위치를 찾는 중이면 다시 지정하지 않고 기다림
+        // (예전에는 매 순간 다시 지정해서 찾기가 끝나지 않고 재생도 시작되지 않아 멈춰 보였음)
+        if (!el.seeking && Math.abs(el.currentTime - s) > 0.04) this.jump(el, s + (el.readyState >= 3 ? 0 : lead));
         el.playbackRate = 1;
-        if (el.readyState >= 2 && !el.seeking) el.play().catch(() => {});
+        el.play().catch(() => {});   // 찾는 중이어도 재생을 걸어 두면 준비되는 대로 나옴
       } else if (!el.seeking && !(el as any).__seekHold) {
         // 영상이 시계보다 앞서거나 늦으면: 조금이면 재생 속도로, 많이면 위치를 옮겨서 맞춤
         const drift = s - el.currentTime;
-        if (Math.abs(drift) > 0.25) { el.playbackRate = 1; this.jump(el, s); }
+        if (Math.abs(drift) > 0.25) { el.playbackRate = 1; this.jump(el, s + (drift > 0 ? lead : 0)); }
         else if (Math.abs(drift) > 0.02) el.playbackRate = 1 + Math.max(-0.1, Math.min(0.1, drift * 1.5));
         else if (el.playbackRate !== 1) el.playbackRate = 1;
       }

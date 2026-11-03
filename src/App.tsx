@@ -183,6 +183,8 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const [cropMode, setCropMode] = useState(false);
   // 타임라인에서 고른 트랙: 'program'(결과물) | 'main' | 앵글 id | 'rec'
   const [selTrack, setSelTrack] = useState('program');
+  const [soloOn, setSoloOn] = useState(false);   // 고른 앵글만 따로 보기 (기본은 효과가 모두 들어간 화면)
+  useEffect(() => { setSoloOn(false); }, [selTrack]);
   const [selClipSrc, setSelClipSrc] = useState<string | null>(null);
   const [levelGrid, setLevelGrid] = useState(false);   // 회전 슬라이더를 만지는 동안 미리보기에 수평 격자   // 타임라인에서 고른 영상 조각의 파일 (MAIN = 첫 영상)
   const [inOut, setInOut] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
@@ -1389,10 +1391,11 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     : templates.map(t => ({ key: t.name, name: t.name, layouts: t.layouts, by: '', canDelete: true, remove: () => setTemplates(ts => ts.filter(x => x.name !== t.name)) }));
 
   // 지금 보이는 앵글의 영상 배치
-  const viewTrack = selTrack === 'main' || angles.some(a => a.id === selTrack) ? selTrack : null; // 미리보기에서 단독으로 볼 영상
+  const pickTrack = selTrack === 'main' || angles.some(a => a.id === selTrack) ? selTrack : null;   // 타임라인에서 고른 영상 줄 (구간 넣기 대상)
+  const viewTrack = soloOn && pickTrack ? pickTrack : null;   // 미리보기에서 단독으로 볼 영상 (버튼으로 켤 때만)
   // 크기·자르기를 맞출 영상: 영상 줄에서 조각을 골랐으면 그 조각의 영상 (이어 붙인 영상마다 따로), 앵글을 골랐으면 그 앵글, 아니면 지금 화면의 영상
   const pickedSrc = selTrack === 'main' && selClipSrc && sources.some(x => x.id === selClipSrc) ? selClipSrc : null;
-  const curSrcId = pickedSrc || viewTrack || (hasVideo ? activeSource(videoRef.current!, angles, project, now, srcMap).id : MAIN);
+  const curSrcId = pickedSrc || pickTrack || (hasVideo ? activeSource(videoRef.current!, angles, project, now, srcMap).id : MAIN);
   const curXf = getXf(project, ratio, curSrcId);
   const curNum = curSrcId === MAIN ? 1 : angles.findIndex(a => a.id === curSrcId) + 2;
   const curSrcName = sources.find(x => x.id === curSrcId)?.name;
@@ -1613,28 +1616,28 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     applyCapPatch({ x, y }, id);
   };
 
-  const viewNum = viewTrack ? (viewTrack === MAIN ? 1 : angles.findIndex(a => a.id === viewTrack) + 2) : 0;
+  const viewNum = pickTrack ? (pickTrack === MAIN ? 1 : angles.findIndex(a => a.id === pickTrack) + 2) : 0;
   const setMark = (k: 'a' | 'b') => {
     const t = Math.max(0, snapTime(projRef.current, tnow()));
     setInOut(io => ({ ...io, [k]: t }));
   };
   /** 보고 있는 앵글을 지금 위치부터 결과물에 넣기 */
   const insertHere = () => {
-    if (!viewTrack) return;
+    if (!pickTrack) return;
     const p = projRef.current;
     const t = Math.max(0, snapTime(p, tnow()));
-    setProject({ cuts: setCutAt(p.cuts, t, viewTrack) });
+    setProject({ cuts: setCutAt(p.cuts, t, pickTrack) });
     setMsg({ kind: 'ok', text: `${fmtTime(t)}부터 ${viewNum}번 앵글을 넣었어요` });
   };
   /** 보고 있는 앵글을 시작~끝 구간에만 넣고, 끝난 뒤엔 원래 앵글로 */
   const insertRange = () => {
-    if (!viewTrack || inOut.a === null || inOut.b === null) return;
+    if (!pickTrack || inOut.a === null || inOut.b === null) return;
     const a = Math.min(inOut.a, inOut.b), b = Math.max(inOut.a, inOut.b);
     if (b - a < 0.05) return;
     const p = projRef.current;
     const after = angleAt(p.cuts, b + 1e-4);
     const rest = p.cuts.filter(c => c.t < a - 1e-3 || c.t > b + 1e-3);
-    const cuts = normalizeCuts([...rest, { t: a, angle: viewTrack }, ...(b < duration - 0.05 ? [{ t: b, angle: after }] : [])]);
+    const cuts = normalizeCuts([...rest, { t: a, angle: pickTrack }, ...(b < duration - 0.05 ? [{ t: b, angle: after }] : [])]);
     setProject({ cuts });
     setInOut({ a: null, b: null });
     setMsg({ kind: 'ok', text: `${fmtTime(a)}~${fmtTime(b)} 구간에 ${viewNum}번 앵글을 넣었어요` });
@@ -2156,14 +2159,15 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             <button type="button" className="btn ghost sm" onClick={() => { setPickRange(null); setExportOpen(true); }}>취소</button>
           </div>
         )}
-        {viewTrack && (
+        {pickTrack && angles.length > 0 && (
           <div className="srcbar">
-            <span className="src-tag" style={{ ['--c' as any]: angleInfo(viewTrack).color }}>{viewNum}번 앵글</span>
+            <span className="src-tag" style={{ ['--c' as any]: angleInfo(pickTrack).color }}>{viewNum}번 앵글</span>
+            <button type="button" className={`btn sm ${soloOn ? 'accent' : 'ghost'}`} aria-pressed={soloOn} onClick={() => setSoloOn(v => !v)} title="미리보기에서 이 앵글만 효과 없이 보기">{soloOn ? '효과 넣은 화면 보기' : '이 앵글만 보기'}</button>
             <button type="button" className="btn ghost sm" onClick={() => setMark('a')} title="시작 표시">시작 <span className="mono">{inOut.a !== null ? fmtTime(inOut.a) : '--'}</span></button>
             <button type="button" className="btn ghost sm" onClick={() => setMark('b')} title="끝 표시">끝 <span className="mono">{inOut.b !== null ? fmtTime(inOut.b) : '--'}</span></button>
             <button type="button" className="btn accent sm" disabled={inOut.a === null || inOut.b === null} onClick={insertRange}>구간 넣기</button>
             <button type="button" className="btn sm" onClick={insertHere}>여기부터 넣기</button>
-            <button type="button" className="btn ghost sm" onClick={() => { setSelTrack('program'); setInOut({ a: null, b: null }); }}>결과물 보기 (Esc)</button>
+            <button type="button" className="btn ghost sm" onClick={() => { setSelTrack('program'); setInOut({ a: null, b: null }); }}>닫기 (Esc)</button>
           </div>
         )}
         <Timeline viewShift={viewShift} video={videoRef.current || document.createElement('video')} duration={tlEnd} srcDur={duration} now={tnow} project={project}
@@ -2185,6 +2189,15 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
           onSkips={list => setProject({ skips: list })}
           playing={playing}
           onClips={list => setProject({ clips: list, skips: [], trims: { ...(projRef.current.trims || {}), main: undefined as any } })}
+          onClipsRec={(list, recs) => {
+            const p = projRef.current;
+            let patch: Partial<Project> = { clips: list, skips: [], trims: { ...(p.trims || {}), main: undefined as any } };
+            for (const r of recs) {
+              if (r.id === 'rec') patch = { ...patch, ...recPatch(r.at) };
+              else patch.recClips = (patch.recClips || p.recClips || []).map(c => recKeyOf(c) === r.id ? { ...c, at: r.at } : c);
+            }
+            setProject(patch);
+          }}
           onCycle={c => setProject({ cycle: c || undefined })}
           onTrim={(id, tr) => setProject({ trims: { ...(projRef.current.trims || {}), [id]: tr } })}
           onClipTr={(id, tr) => { const p = projRef.current; setProject({ clips: clipsOf(p, masterDur()).map(c => { if (c.id !== id) return c; const n = { ...c }; if (tr) n.trIn = tr; else delete n.trIn; return n; }), skips: [] }); }}

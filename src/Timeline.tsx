@@ -38,7 +38,8 @@ interface Props {
   onPick: (a: number, b: number) => void;
   onSheetClips: (list: SheetClip[] | null) => void;   // 악보 조각 (null = 처음대로)
   hasSheet: boolean;
-  onSlip: (id: string, offset: number) => void;               // 녹음본·앵글 위치 끌기 (싱크 맞추기)
+  onSlip: (id: string, offset: number) => void;
+  onClipsRec?: (clips: Clip[], recs: { id: string; at: number }[]) => void;   // 영상 조각을 옮기면서 맞춰 둔 녹음본도 같이 (한 번에 저장)               // 녹음본·앵글 위치 끌기 (싱크 맞추기)
   onGrid: (patch: { anchorTime?: number; bpm?: number }) => void;  // 마디 눈금 끌기
   onSkips: (list: Skip[]) => void;                             // 잘라낸 구간
   onTrim: (id: string, tr: { in: number; out: number }) => void;   // 트랙 앞뒤 줄이기
@@ -680,7 +681,23 @@ export function Timeline(props: Props) {
   const clipHover = useRef<{ id: string; edge: 'in' | 'out'; clip: string } | null>(null);
   const selClipRef = useRef<string | null>(null);                    // 고른 기준 영상 조각
   const pickClip = (c: Clip | null) => { selClipRef.current = c ? c.id : null; live.current.onSelectClip?.(c); };
-  const clipMove = useRef<{ id: string; x0: number; start0: number; moved: boolean } | null>(null);
+  const clipMove = useRef<{ id: string; x0: number; start0: number; moved: boolean; recs: { id: string; at0: number }[] } | null>(null);
+  const lp0Recs = (id: string) => (live.current.onClipsRec ? linkedRecs(id) : []);
+  /** 이 영상 조각에 맞춰 둔 녹음본 조각들: 녹음본마다 가장 많이 겹치는 영상 조각이 이 조각이면 같이 움직임 */
+  const linkedRecs = (clipId: string) => {
+    const p = live.current, cs = clipsOf(p.project, p.srcDur);
+    const pieces: { id: string; at0: number; a: number; b: number }[] = [];
+    if (p.rTrack) { const tr = trimOf(p.project, 'rec', p.rTrack.duration); pieces.push({ id: 'rec', at0: p.recAt, a: p.recAt + tr.in, b: p.recAt + tr.out }); }
+    for (const rx of p.recExtras || []) {
+      const dur = rx.dur || rx.track?.duration || 0, tr = trimOf(p.project, rx.key, dur);
+      pieces.push({ id: rx.key, at0: rx.at, a: rx.at + tr.in, b: rx.at + tr.out });
+    }
+    return pieces.filter(r => {
+      let best: string | null = null, bo = 0.05;
+      for (const c of cs) { const o = Math.min(r.b, clipEnd(c)) - Math.max(r.a, c.start); if (o > bo) { bo = o; best = c.id; } }
+      return best === clipId;
+    }).map(r => ({ id: r.id, at0: r.at0 }));
+  };
   const clipTrim = useRef<{ id: string; edge: 'in' | 'out' } | null>(null);
   const rulerDown = useRef<{ x0: number; t0: number; moved: boolean } | null>(null);
   const cycleDrag = useRef<{ mode: 'start' | 'end' | 'move'; grab: number; c0: { start: number; end: number; on: boolean }; x0: number; moved: boolean } | null>(null);
@@ -1295,7 +1312,7 @@ export function Timeline(props: Props) {
         return;
       }
     }
-    // 기준 영상 조각: 잡고 끌면 박 단위로 이동 (녹음본·앵글이 같이 따라감)
+    // 기준 영상 조각: 잡고 끌면 박 단위로 이동 (맞춰 둔 녹음본이 같이 따라감)
     {
       const r = rowAt(e.clientY);
       if (r === 'main' && (live.current.vTrack || live.current.srcDur)) {
@@ -1303,7 +1320,7 @@ export function Timeline(props: Props) {
         selSheet.current = null;   // 영상 줄을 누르면 악보 선택은 풀림 (그다음 I는 영상을 자름)
         const c = clipUnder(e.clientX);
         pickClip(c || null);
-        if (c) clipMove.current = { id: c.id, x0: e.clientX, start0: c.start, moved: false };
+        if (c) clipMove.current = { id: c.id, x0: e.clientX, start0: c.start, moved: false, recs: lp0Recs(c.id) };
         else marquee.current = { x0: e.clientX, y0: e.clientY, x1: e.clientX, y1: e.clientY, base: new Set() };   // 빈 곳: 끌어서 여러 개 고르기
         return;
       }
@@ -1451,9 +1468,11 @@ export function Timeline(props: Props) {
       if (!d.moved && Math.abs(e.clientX - d.x0) < 4) return;
       d.moved = true;
       const u = snapUnit(), dt = (e.clientX - d.x0) / pps, q = e.altKey ? dt : Math.round(dt / u) * u;
-      const ns = Math.max(-1e6, d.start0 + q);
-      lp.onClips(clipsOf(P, lp.srcDur).map(c => c.id === d.id ? { ...c, start: ns } : c));
-      tip.current = { text: e.altKey ? `${q >= 0 ? '+' : ''}${q.toFixed(3)}초` : `${beatsText(q)} · ${unitName(u)} 단위`, x: e.clientX };
+      const ns = Math.max(-1e6, d.start0 + q), list = clipsOf(P, lp.srcDur).map(c => c.id === d.id ? { ...c, start: ns } : c);
+      // 맞춰 둔 녹음본도 같이 (녹음본을 직접 끌면 녹음본만 움직임)
+      if (d.recs.length && lp.onClipsRec) lp.onClipsRec(list, d.recs.map(r => ({ id: r.id, at: Math.round((r.at0 + (ns - d.start0)) * 1000) / 1000 })));
+      else lp.onClips(list);
+      tip.current = { text: (e.altKey ? `${q >= 0 ? '+' : ''}${q.toFixed(3)}초` : `${beatsText(q)} · ${unitName(u)} 단위`) + (d.recs.length ? ' · 녹음본 같이' : ''), x: e.clientX };
       return;
     }
     // 조각 양 끝 줄이기·늘리기 (끝은 박자 눈금에 붙음)

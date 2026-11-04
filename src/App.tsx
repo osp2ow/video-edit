@@ -183,7 +183,8 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const [cropMode, setCropMode] = useState(false);
   // 타임라인에서 고른 트랙: 'program'(결과물) | 'main' | 앵글 id | 'rec'
   const [selTrack, setSelTrack] = useState('program');
-  const [soloOn, setSoloOn] = useState(false);   // 고른 앵글만 따로 보기 (기본은 효과가 모두 들어간 화면)
+  const [soloOn, setSoloOn] = useState(false);
+  const [reveal, setReveal] = useState<{ a: number; b: number; key?: string; n: number } | undefined>(undefined);   // 타임라인에서 이 구간을 보이게 (새로 넣은 녹음본)   // 고른 앵글만 따로 보기 (기본은 효과가 모두 들어간 화면)
   useEffect(() => { setSoloOn(false); }, [selTrack]);
   const [selClipSrc, setSelClipSrc] = useState<string | null>(null);
   const [levelGrid, setLevelGrid] = useState(false);   // 회전 슬라이더를 만지는 동안 미리보기에 수평 격자   // 타임라인에서 고른 영상 조각의 파일 (MAIN = 첫 영상)
@@ -370,6 +371,11 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
       for (const c of p.recClips || []) if (c.src === MAIN_REC) delete tr[recKeyOf(c)];
       if (p.trims?.rec || (p.recClips || []).some(c => c.src === MAIN_REC)) setProject({ trims: tr, recClips: (p.recClips || []).filter(c => c.src !== MAIN_REC) });
     }
+    else if (recName === file.name) {
+      // 같은 녹음본을 다시 넣었는데 타임라인에서 모두 지운 상태(길이 0)면 다시 처음부터 끝까지 보이게
+      const p = projRef.current, t = p.trims?.rec;
+      if (t && t.out - t.in < 0.01 && !(p.recClips || []).some(c => c.src === MAIN_REC)) { const tr = { ...(p.trims || {}) }; delete tr.rec; setProject({ trims: tr }); }
+    }
     setRecName(file.name);
     setMsg({ kind: 'busy', text: '녹음본 분석 중…' });
     try {
@@ -422,7 +428,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     setMsg({ kind: 'ok', text: '녹음본 조각을 지웠어요. 되돌리려면 Ctrl+Z' });
   };
   /** 녹음본 추가: 영상 소리와 맞는 곳이 있으면 거기에, 없으면 앞 녹음본 뒤에 이어 붙임 */
-  const addRec = async (file: File, restoring = false) => {
+  const addRec = async (file: File, restoring = false, ensure = false) => {
     if (!recName && !restoring) return loadRec(file);
     const id = file.name;
     // 같은 이름이면 거절하지 않고 그 녹음본을 새 파일로 바꿈 (위치·줄이기·페이드는 그대로)
@@ -437,7 +443,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     } catch { setMsg({ kind: 'warn', text: `${file.name}: 읽을 수 없는 파일이에요. mp3 또는 wav 파일을 넣어주세요.` }); return; }
     setExtraRecs(xs => [...xs.filter(x => x.id !== id), { id, track: tr, dur, file }]);
     cloudUpload('recx:' + id, file);
-    if (restoring || (projRef.current.recClips || []).some(c => c.src === id)) { setMsg({ kind: 'ok', text: `${file.name}을 불러왔어요.` }); return; }
+    // 이미 타임라인에 조각이 있으면 그대로 (다시 연 프로젝트 복원 · 같은 이름으로 바꾸기)
+    // 조각을 모두 지웠던 녹음본을 직접 다시 넣은 경우(ensure)에는 새로 놓음 — 예전에는 조각 없이 목록에만 남아 안 보였음
+    if ((projRef.current.recClips || []).some(c => c.src === id) || (restoring && !ensure)) { setMsg({ kind: 'ok', text: `${file.name}을 불러왔어요.` }); return; }
     // 놓을 자리: 영상 소리와 비교해서 가장 잘 맞는 영상에 맞춤
     const p = projRef.current, cs = clipsOf(p, masterDur());
     let at = NaN, how = '앞 녹음본 뒤에 이어 붙였어요', best = 1.1;
@@ -456,8 +464,14 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
         ...(p.recClips || []).map(c => { const d = recDurOf(c.src); return d ? c.at + trimOf(p, recKeyOf(c), d).out : 0; })];
       at = Math.max(0, ...ends);
     }
-    setProject({ recClips: [...(p.recClips || []).filter(c => c.src !== id), { src: id, at: Math.round(at * 1000) / 1000 }] });
-    setMsg({ kind: 'ok', text: `${file.name}: ${how}. 타임라인 '녹음본' 줄에서 끌어서 옮기고 양 끝을 줄일 수 있어요.` });
+    at = Math.round(at * 1000) / 1000;
+    setProject({ recClips: [...(p.recClips || []).filter(c => c.src !== id), { src: id, at }] });
+    // 다른 녹음본과 많이 겹치면 한 줄에 겹쳐 그려져 하나처럼 보이므로 알려 줌
+    const others = recPieces(p).map(x => { const t = trimOf(p, x.key, x.dur); return [x.at + t.in, x.at + t.out]; });
+    const ov = others.reduce((m, [a, b]) => Math.max(m, Math.min(b, at + dur) - Math.max(a, at)), 0);
+    const over = dur > 0 && ov > dur * 0.5 ? ' 다른 녹음본과 같은 자리에 겹쳐 있어요 (위에 보이는 게 새 녹음본).' : '';
+    setReveal({ a: at, b: at + dur, key: recKey(id), n: Date.now() });   // 타임라인을 새 녹음본이 보이게 옮기고 골라 둠
+    setMsg({ kind: 'ok', text: `${file.name}: ${how}.${over} 타임라인 '녹음본' 줄에서 끌어서 옮기고 양 끝을 줄일 수 있어요.` });
   };
   const removeRec = (id: string) => {
     setExtraRecs(xs => xs.filter(x => x.id !== id));
@@ -761,8 +775,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
       setProject({ recClips: (p.recClips || []).map(c => c.src === oldId ? { ...c, src: nid } : c), trims: renameKeys(p.trims, a, b), recFades: renameKeys(p.recFades, a, b) });
       dropCloudRef('recs', oldId);
     }
-    await addRec(file, true);
-    setMsg({ kind: 'ok', text: `${nid}(으)로 바꿨어요. 타임라인 위치·줄이기·페이드는 그대로예요.` });
+    const had = (projRef.current.recClips || []).some(c => c.src === oldId || c.src === nid);
+    await addRec(file, true, true);
+    if (had) setMsg({ kind: 'ok', text: `${nid}(으)로 바꿨어요. 타임라인 위치·줄이기·페이드는 그대로예요.` });
   };
   const replaceSheet = async (oldName: string, file: File) => {
     const nn = file.name;
@@ -2189,6 +2204,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
           onSkips={list => setProject({ skips: list })}
           playing={playing}
           onClips={list => setProject({ clips: list, skips: [], trims: { ...(projRef.current.trims || {}), main: undefined as any } })}
+          reveal={reveal}
           onClipsRec={(list, recs) => {
             const p = projRef.current;
             let patch: Partial<Project> = { clips: list, skips: [], trims: { ...(p.trims || {}), main: undefined as any } };

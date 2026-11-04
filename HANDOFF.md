@@ -27,6 +27,7 @@
 - 테스트: `test/*.mjs` (Playwright, 헤드리스 크롬). 테스트용 영상·악보·녹음 파일은 저장소에 없음
 
 ## 최근 완료
+- 11/4 녹음본 추가했는데 타임라인에 안 보이던 경우 수정: ① 영상 소리와 안 맞아 앞 녹음본 뒤에 붙으면 화면 밖(타임라인은 영상 넣을 때만 전체 보기 맞춤) → App.reveal → Timeline이 보이게 옮기고(전체 보기 중이면 다시 맞춤) 새 조각을 골라 둠 ② 조각을 모두 지운 추가 녹음본을 같은 파일로 다시 넣으면 replaceRec→addRec(restoring)이라 조각이 안 생겼음 → addRec(file, true, ensure) ③ 첫 녹음본을 지운 뒤(trims.rec 길이 0) 같은 이름으로 다시 넣으면 그대로 0 → loadRec에서 줄이기 초기화. 다른 녹음본과 50% 넘게 겹치면 알림 문구 (`test/addrecshow.mjs 영상 녹음본1 녹음본2`)
 - 11/3 붙여넣은 녹음본(·모든 요소) 페이드 안 되던 문제: 붙여넣으면 여러 개 선택(msel) 상태라 누르기를 groupDrag가 먼저 가져가서 ① 한 번 눌러도 그 조각이 안 골라져 페이드 칸이 안 뜨고 ② 위쪽 모서리 페이드 손잡이를 끌면 조각이 옮겨졌음. 이제 페이드 손잡이 판정을 msel보다 먼저, 끌지 않고 놓으면 selectOne(그 요소 하나 고르기) (`test/pastefade.mjs 영상 녹음본`). 소리 쪽 페이드 예약은 원래 정상 (`test/fadeaudio.mjs`, `test/fade2.mjs`, `test/vidfade.mjs`, `test/fadehandle.mjs`)
 - 11/3 미리보기 기본 = 효과 넣은 화면: 영상 줄·앵글 줄을 골라도 단독 보기로 바뀌지 않음 (App: pickTrack = 고른 줄, viewTrack = soloOn일 때만). 앵글이 있을 때 앵글 도구 막대에 '이 앵글만 보기' 토글 (`test/anglesolo.mjs 영상 앵글`)
 - 11/3 영상 조각을 끌면 맞춰 둔 녹음본이 같이 이동 (Timeline.linkedRecs: 녹음본 조각마다 가장 많이 겹치는 영상 조각이 끈 조각이면 따라감 · App.onClipsRec로 한 번에 저장, 첫 녹음본은 recPatch라 마디 눈금도 같이). 녹음본을 끌면 녹음본만 (`test/linkrec.mjs 영상1 녹음본 영상2` — 앞쪽 빈 구간 자동 정리 때문에 위치는 상대값으로 비교)

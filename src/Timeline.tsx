@@ -39,7 +39,8 @@ interface Props {
   onSheetClips: (list: SheetClip[] | null) => void;   // 악보 조각 (null = 처음대로)
   hasSheet: boolean;
   onSlip: (id: string, offset: number) => void;
-  onClipsRec?: (clips: Clip[], recs: { id: string; at: number }[]) => void;   // 영상 조각을 옮기면서 맞춰 둔 녹음본도 같이 (한 번에 저장)               // 녹음본·앵글 위치 끌기 (싱크 맞추기)
+  onClipsRec?: (clips: Clip[], recs: { id: string; at: number }[]) => void;
+  reveal?: { a: number; b: number; key?: string; n: number };   // 이 구간이 보이게 옮기고 (녹음본이면) 골라 둠   // 영상 조각을 옮기면서 맞춰 둔 녹음본도 같이 (한 번에 저장)               // 녹음본·앵글 위치 끌기 (싱크 맞추기)
   onGrid: (patch: { anchorTime?: number; bpm?: number }) => void;  // 마디 눈금 끌기
   onSkips: (list: Skip[]) => void;                             // 잘라낸 구간
   onTrim: (id: string, tr: { in: number; out: number }) => void;   // 트랙 앞뒤 줄이기
@@ -147,6 +148,15 @@ export function Timeline(props: Props) {
   // 처음 영상을 넣었을 때만 전체 보기로 맞춤 (조각을 옮겨 타임라인 길이가 바뀌어도 확대 상태는 그대로)
   useEffect(() => { if (props.srcDur) fit(); }, [props.srcDur]);
   useEffect(() => { if (props.duration && !props.srcDur) fit(); }, [props.duration]);
+  // 새로 넣은 녹음본: 화면 밖이면 보이게 (전체 보기 중이면 늘어난 길이로 다시 맞춤) · 골라 둠
+  useEffect(() => {
+    const rv = props.reveal; if (!rv) return;
+    const w = wrap.current?.clientWidth || 800, v = view.current, span = w / v.pps;
+    if (v.fitted || rv.b - rv.a > span * 0.9) fit();
+    else if (rv.a < v.start || rv.b > v.start + span) { v.start = Math.max(-span * 0.02, rv.a - span * 0.1); force(n => n + 1); }
+    if (rv.key) { msel.current = new Set(); pickClip(null); selRecRef.current = rv.key; live.current.onSelect('rec'); force(n => n + 1); }
+    // eslint-disable-next-line
+  }, [props.reveal?.n]);
   useEffect(() => {
     const vs = props.viewShift; if (!vs || !vs.n) return;
     if (view.current.fitted) fit(); else { view.current.start -= vs.dt; force(n => n + 1); }

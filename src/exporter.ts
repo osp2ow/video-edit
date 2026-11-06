@@ -266,15 +266,35 @@ export async function exportMp4(inp: ExportInput, o: ExportOptions, plan: CodecP
     try { const d = await openFrameSource(await (await fetch(el.currentSrc || el.src)).blob()); if (d) ovDec.set(o.id, d); }
     catch (e) { console.warn('[추출] PIP 영상 풀기 실패', o.src, e); }
   }
+  // PIP 장면: 파일에서 풀 수 있으면 디코더로, 못 풀면(아이폰 HEVC 등) 미리보기용 PIP 영상을 그 시각으로 옮겨서 받음
+  // (예전에는 못 풀면 검은 상자만 그려졌음)
   const ovFrames = async (T: number, m: Map<string, HTMLVideoElement | null>) => {
-    for (const o of overlaysAt(inp.project, T)) { const d = ovDec.get(o.id); m.set('ov:' + o.id, d ? (await d.frameAt(o.srcIn + (T - o.start))) as any : null); }
+    for (const o of overlaysAt(inp.project, T)) {
+      const s = o.srcIn + (T - o.start), d = ovDec.get(o.id);
+      if (d) { m.set('ov:' + o.id, (await d.frameAt(s)) as any); continue; }
+      const el = inp.ovEls?.get(o.id);
+      if (!el) { m.set('ov:' + o.id, null); continue; }
+      if (!el.paused) el.pause();
+      if (Math.abs(el.currentTime - s) > 0.001 || el.readyState < 2) { const w = waitEvent(el, 'seeked', 4000); el.currentTime = s; await w; }
+      m.set('ov:' + o.id, el.videoWidth ? el : null);
+    }
+  };
+  // 재생하며 받기(예비 방식): PIP 영상도 같이 재생시키며 시계를 따라가게 (예전에는 매 장면 위치만 옮겨서 멈춰 보였음)
+  const ovFollow = (T: number) => {
+    if (!inp.ovEls) return;
+    const on = new Set(overlaysAt(inp.project, T).map(o => o.id));
+    for (const o of inp.project.overlays || []) {
+      const el = inp.ovEls.get(o.id); if (!el) continue;
+      if (!on.has(o.id)) { if (!el.paused) el.pause(); continue; }
+      const s = o.srcIn + (T - o.start);
+      el.muted = true;
+      if (el.paused) { if (Math.abs(el.currentTime - s) > 0.05) el.currentTime = s; el.play().catch(() => {}); }
+      else if (!el.seeking && Math.abs(el.currentTime - s) > 0.3) el.currentTime = s + 0.15;
+    }
   };
   let frames: Map<string, HTMLVideoElement | null> | undefined, framesFrom: Map<string, HTMLVideoElement | null> | undefined;
   const emitFrame = (T: number) => {
-    if (!decoded && inp.ovEls) for (const o of overlaysAt(inp.project, T)) {   // 재생하며 받기: PIP 영상은 그 시각으로 옮겨 둠 (근사)
-      const el = inp.ovEls.get(o.id), s = o.srcIn + (T - o.start);
-      if (el && !el.seeking && Math.abs(el.currentTime - s) > 0.04) el.currentTime = s;
-    }
+    if (!decoded) ovFollow(T);
     renderComposite(ctx, W, H, T, { master, angles: inp.angles, sources: srcEls, sheets: inp.sheets, project: inp.project, sheet: inp.sheet, layout: inp.layout, range: [start, end], frames, framesFrom, overlays: inp.ovEls });
     const vf = new VideoFrame(canvas, { timestamp: Math.round(k / o.fps * 1e6), duration: Math.round(1e6 / o.fps) });
     venc.encode(vf, { keyFrame: k % (o.fps * 2) === 0 });
@@ -329,7 +349,7 @@ export async function exportMp4(inp: ExportInput, o: ExportOptions, plan: CodecP
           frames = await framesOf(ct.B, ct.tB);
         }
         else frames = pc.clip ? await framesOf(pc.clip, T) : new Map();
-        if (ovDec.size) await ovFrames(T, frames!);
+        if (inp.project.overlays?.length) await ovFrames(T, frames!);
         emitFrame(T);
         await drain();
         if (k % 15 === 0) onProgress(k / total, '영상 만드는 중');
@@ -423,6 +443,7 @@ export async function exportMp4(inp: ExportInput, o: ExportOptions, plan: CodecP
     });
    }
   } finally {
+    if (inp.ovEls) for (const el of inp.ovEls.values()) if (!el.paused) el.pause();
     for (const o of saved) { o.v.muted = o.muted; o.v.playbackRate = o.rate; }
     setExporting(false);
     if (decoded) { decoded.main?.close(); for (const d of decoded.angles.values()) d.close(); for (const d of decoded.sources.values()) d.close(); }

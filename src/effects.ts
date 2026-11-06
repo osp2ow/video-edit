@@ -2,7 +2,7 @@
 // 순서: 영상(전환·분할·박자 효과) → 비네트 → 악보 카드 → 자막 → 로고 → 플래시 → 인트로/엔딩 카드 → 페이드
 import { colorFilterFor, joinFilter } from './colormatch';
 import { retouchFaces } from './face';
-import { CardLayout, Project, Fx, ColorFilter, TransType, MAIN, getFx, getXf, angleAt, barLen, beatLen, LAYOUT_LABEL, cardSpan, ratioOfWH, cardAlpha, srcAt, CardStyle, cardStyleOf, NEUTRAL_FILTER, sheetClipAt, cardPageAt, FIRST_PAGE, clipFadeAt, Clip, clipsOf, clipEnd } from './model';
+import { CardLayout, Project, Fx, ColorFilter, TransType, MAIN, getFx, getXf, angleAt, barLen, beatLen, LAYOUT_LABEL, cardSpan, ratioOfWH, cardAlpha, srcAt, CardStyle, cardStyleOf, NEUTRAL_FILTER, sheetClipAt, cardPageAt, FIRST_PAGE, clipFadeAt, Clip, clipsOf, clipEnd, Overlay, overlaysAt } from './model';
 import { SheetData } from './sheet';
 import { Angle } from './angles';
 import { drawVideo, drawCard, drawCaptions, FONT, safeZones } from './render';
@@ -18,6 +18,7 @@ export interface Env {
   framesFrom?: Map<string, HTMLVideoElement | null>;   // 추출용: 영상 조각 사이 장면 전환 중 '앞 조각' 장면
   sources?: Map<string, HTMLVideoElement>;         // 추가로 올린 영상들 (조각의 src → <video>)
   sheets?: Map<string, SheetData>;                 // 두 번째부터 넣은 악보들 (악보 조각의 sheet 이름 → 악보)
+  overlays?: Map<string, HTMLVideoElement>;        // 미리보기: PIP 영상 조각 id → 그 조각 전용 <video> (추출은 frames의 'ov:'+id)
 }
 
 /** t에 보여줄 악보 파일 (악보 조각마다 다른 악보일 수 있음) */
@@ -120,6 +121,41 @@ export function pipBox(W: number, H: number, p: Project) {
   const w = W * (pos?.w ?? (ratio === '9:16' ? 0.4 : ratio === '4:5' ? 0.36 : 0.3)), h = w * ar;
   const x = pos ? pos.x * W : W - w - W * 0.04, y = pos ? pos.y * H : ratio === '9:16' ? H * 0.16 : H * 0.05;
   return { x, y, w, h, ar };
+}
+
+/** PIP 영상 자리 (픽셀): 저장된 위치가 없으면 오른쪽 위. 높이는 그 영상 비율대로 (세로 영상은 세로로 길게) */
+export function ovBox(W: number, H: number, o: Overlay, vw?: number, vh?: number) {
+  const ratio = ratioOf(W, H);
+  const ar = vw && vh ? vh / vw : 9 / 16;   // 높이/폭
+  const pos = o.box?.[ratio];
+  let w = W * (pos?.w ?? (ratio === '9:16' ? 0.4 : ratio === '4:5' ? 0.36 : 0.3));
+  if (!pos && w * ar > H * 0.5) w = H * 0.5 / ar;   // 기본 크기: 세로 영상이 화면을 다 덮지 않게
+  const h = w * ar;
+  // 기본 자리: 오른쪽, 아래쪽 (위쪽은 악보 카드, 맨 아래는 SNS 글씨 자리라 피함)
+  const x = pos ? pos.x * W : W - w - W * 0.04, y = pos ? pos.y * H : Math.max(H * 0.05, (ratio === '9:16' ? H * 0.74 : ratio === '4:5' ? H * 0.8 : H * 0.92) - h);
+  return { x, y, w, h, ar };
+}
+/** PIP 영상 장면 (미리보기: 그 조각 전용 영상 · 추출: 파일에서 풀어 둔 장면) */
+export function ovFrame(env: Env, o: Overlay): HTMLVideoElement | null {
+  if (env.frames) return env.frames.get('ov:' + o.id) ?? null;
+  const el = env.overlays?.get(o.id);
+  return el && el.videoWidth ? frameOf(el) : null;
+}
+/** PIP 영상들을 화면 위에 작게 (둥근 모서리 + 흰 테두리, 조각 페이드만큼 투명하게) */
+function drawOverlays(ctx: CanvasRenderingContext2D, W: number, H: number, t: number, env: Env) {
+  for (const o of overlaysAt(env.project, t)) {
+    const v = ovFrame(env, o);
+    const { x, y, w, h } = ovBox(W, H, o, v?.videoWidth, v?.videoHeight);
+    const a = clipFadeAt(o, t);
+    if (a <= 0.001) continue;
+    ctx.save();
+    ctx.globalAlpha = a;
+    ctx.beginPath(); ctx.roundRect(x, y, w, h, Math.min(w, h) * 0.06); ctx.save(); ctx.clip();
+    if (v) drawCover(ctx, v, x, y, w, h); else { ctx.fillStyle = '#111'; ctx.fillRect(x, y, w, h); }
+    ctx.restore();
+    ctx.strokeStyle = 'rgba(255,255,255,0.9)'; ctx.lineWidth = W * 0.005; ctx.stroke();
+    ctx.restore();
+  }
 }
 
 /** 앵글 하나(또는 분할·PIP 구성)를 화면 전체에 그리기 */
@@ -464,6 +500,7 @@ export function renderComposite(ctx: CanvasRenderingContext2D, W: number, H: num
     } else drawProgram(ctx, W, H, t, env);
     retouchFaces(ctx, W, H, fx.face);   // 얼굴 보정 (자막·악보는 영향 없음)
     drawClipFade(ctx, W, H, t, env);   // 영상 조각 페이드
+    drawOverlays(ctx, W, H, t, env);   // PIP 영상 (기준 화면 위에 작게)
     // 2) 비네트
     if (fx.vignette > 0 && fx.filterOn !== false) {
       const g = ctx.createRadialGradient(W / 2, H / 2, Math.min(W, H) * 0.35, W / 2, H / 2, Math.hypot(W, H) / 2);

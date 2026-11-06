@@ -78,7 +78,11 @@ export function srcAt(p: Project, t: number, dur: number): { clip: Clip; s: numb
   return hit ? { clip: hit, s: hit.srcIn + (t - hit.start) } : null;
 }
 /** 타임라인 끝 (마지막 조각 끝) */
-export const timelineEnd = (p: Project, dur: number) => Math.max(dur || 0, ...clipsOf(p, dur).map(clipEnd));
+export const timelineEnd = (p: Project, dur: number) => Math.max(dur || 0, ...clipsOf(p, dur).map(clipEnd), ...(p.overlays || []).map(clipEnd));
+/** PIP 영상 (추가 영상을 기준 화면 위에 작게 겹쳐서 같이 재생): 타임라인 조각 + 화면 위치(비율별) + 소리 켬 */
+export interface Overlay extends Clip { src: string; box?: Partial<Record<Ratio, PipPos>>; sound?: boolean }
+/** 타임라인 t에 보이는 PIP 영상들 (뒤에 있는 것이 위에 그려짐) */
+export const overlaysAt = (p: Project, t: number): Overlay[] => (p.overlays || []).filter(o => t >= o.start - 1e-6 && t < clipEnd(o) - 1e-6);
 /** 타임라인 전체를 dt초 옮기는 변경 (모든 요소의 상대 위치는 그대로 — 앞쪽 빈 구간 없애기용) */
 export function shiftProject(p: Project, dur: number, dt: number): Partial<Project> {
   const fx = getFx(p);
@@ -98,6 +102,7 @@ export function shiftProject(p: Project, dur: number, dt: number): Partial<Proje
     },
   };
   if (p.recClips) out.recClips = p.recClips.map(c => ({ ...c, at: c.at + dt }));
+  if (p.overlays) out.overlays = p.overlays.map(o => ({ ...o, start: o.start + dt }));
   if (p.sheetClips) out.sheetClips = p.sheetClips.map(c => ({ ...c, start: c.start + dt }));
   if (p.cycle) out.cycle = { ...p.cycle, start: Math.max(0, p.cycle.start + dt), end: Math.max(0, p.cycle.end + dt) };
   return out;
@@ -345,6 +350,7 @@ export interface Project {
   trims?: Record<string, Trim>;   // 트랙별 쓰는 부분 (그 파일의 시간, 초) — 'main'·앵글 id·'rec'
   captionStyles: Record<Ratio, CaptionStyle>;
   pip?: Partial<Record<Ratio, PipPos>>;
+  overlays?: Overlay[];   // PIP 영상 줄: 추가 영상을 기준 화면 위에 작게 겹쳐 같이 재생
   chordPos?: Partial<Record<Ratio, ChordPos>>;   // 코드표 위치·크기 (공통)   // PIP 작은 화면 위치·크기 (화면 비율별, 없으면 기본 자리)
   fx: Fx;
   sheetOffset: number;  // 악보 표기 이동(마디). +1이면 악보 첫 마디가 한 마디 늦게, -1이면 한 마디 일찍 (못갖춘마디용)

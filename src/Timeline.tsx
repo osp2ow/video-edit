@@ -1,5 +1,5 @@
 // 타임라인: 마디 눈금(고정) + 앵글 전환 줄 + 파형 줄(영상·앵글들·녹음본, 세로 스크롤) + 재생 위치
-import { Project, Cut, Caption, ZoomSeg, Punch, getFx, markKind, cardSpan, cardPages, CardPage, SheetClip, sheetClipsOf, sheetClipEnd, Skip, mergeSkips, trimOf, Clip, clipsOf, clipEnd, sheetPos, MARK_KINDS, MARK_AMT, MarkKind, MAIN, TRANS_LIST, TransType, barAt, barStart, beatLen, barLen, normalizeCuts, sheetStart, sheetEnd, Fx, clipBarLen, snapTime, bpmAt, recKeyOf, fadeOf, Fade, clipFade, RecClip, MAIN_REC, Trim } from './model';
+import { Project, Cut, Caption, ZoomSeg, Punch, getFx, markKind, cardSpan, cardPages, CardPage, SheetClip, sheetClipsOf, sheetClipEnd, Skip, mergeSkips, trimOf, Clip, clipsOf, clipEnd, sheetPos, MARK_KINDS, MARK_AMT, MarkKind, MAIN, TRANS_LIST, TransType, barAt, barStart, beatLen, barLen, normalizeCuts, sheetStart, sheetEnd, Fx, clipBarLen, snapTime, bpmAt, recKeyOf, fadeOf, Fade, clipFade, RecClip, MAIN_REC, Trim , Overlay } from './model';
 import { Track, PEAKS_RATE } from './analysis';
 
 const { useRef, useEffect, useState } = React;
@@ -59,6 +59,7 @@ interface Props {
   srcTrackOf?: (src?: string) => Track | null;  // 영상 파일별 소리 (파형)
   srcDurOf?: (src?: string) => number;          // 영상 파일별 길이
   srcLabelOf?: (src?: string) => string;        // 영상 파일 이름 (조각 위에 표시)
+  onOverlays?: (list: Overlay[]) => void;        // PIP 영상 줄 조각들 바꾸기 (옮기기·줄이기·지우기·자르기)
   recExtras?: { key: string; src: string; name: string; at: number; track: Track | null; dur: number }[];   // 녹음본 조각들 (추가 녹음본 · 잘라서 생긴 조각)
   onClipTr?: (clipId: string, tr: { type: TransType; dur: number } | null) => void;   // 앞 조각에서 이 조각으로 넘어갈 때 장면 전환 (null = 효과 탭 기본값)
   onFade?: (key: string, f: Fade) => void;   // 페이드 인·아웃: 녹음본 조각('rec'·'recx:…') · 영상 조각('clip:id')
@@ -131,8 +132,24 @@ export function Timeline(props: Props) {
   // 효과 지점을 누르고 끌지 않고 떼면 그 지점 하나만 편집하는 메뉴
   const [markMenu, setMarkMenu] = useState<{ id: string; x: number; y: number } | null>(null);
   const markDown = useRef<{ id: string; x: number; moved: boolean } | null>(null);
+  // PIP 영상 줄 (PIP 영상이 있을 때만 영상 줄 바로 아래에)
+  const ovList = (): Overlay[] => (live.current.project.overlays || []) as Overlay[];
+  const hasOv = () => !!live.current.onOverlays && ovList().length > 0;
+  const rowIds = () => ['main', ...(hasOv() ? ['pip'] : []), ...live.current.angleTracks.map(a => a.id), 'rec'];
+  const selOvRef = useRef<string | null>(null);
+  const ovDrag = useRef<{ id: string; mode: 'move' | 'in' | 'out'; x0: number; o0: Overlay; moved: boolean } | null>(null);
+  /** PIP 줄에서 누른 조각 (양 끝 8px 안이면 줄이기) */
+  const ovAt = (clientX: number) => {
+    const r = canvas.current!.getBoundingClientRect(), x = clientX - r.left, v = view.current, tx = (t: number) => (t - v.start) * v.pps;
+    for (const o of [...ovList()].reverse()) {
+      const a = tx(o.start), b = tx(clipEnd(o));
+      if (x < a - 3 || x > b + 3) continue;
+      return { o, edge: x <= a + 8 ? 'in' as const : x >= b - 8 ? 'out' as const : null };
+    }
+    return null;
+  };
   const geo = () => {
-    const n = 2 + live.current.angleTracks.length;
+    const n = rowIds().length;
     const contentH = ROWS_Y + n * (ROW + GAP) + 2;
     const visH = Math.min(contentH, MAX_VIS);
     return { contentH, visH, H: RULER + visH, maxScroll: Math.max(0, contentH - visH) };
@@ -404,6 +421,7 @@ export function Timeline(props: Props) {
     const clips = clipsOf(p, live.current.srcDur);
     const rows: { id: string; tr: Track | null; col: string; name: string; muted: boolean; off: number }[] = [
       { id: 'main', tr: vTrack || silentTrack(live.current.srcDur) || (clips.length ? silentTrack(1) : null), col: C.vWave, name: '영상', muted: p.videoMuted, off: 0 },
+      ...(hasOv() ? [{ id: 'pip', tr: silentTrack(1), col: '#ffb8d6', name: ovList().some(o => o.sound) ? 'PIP · 소리 켬' : 'PIP', muted: false, off: 0 }] : []),
       ...angleTracks.map(a => ({ id: a.id, tr: a.track, col: a.color, name: `${a.num}번 앵글`, muted: false, off: a.offset })),
       { id: 'rec', tr: rTrack, col: C.rWave, name: '녹음본', muted: p.recMuted, off: 0 },
     ];
@@ -418,13 +436,13 @@ export function Timeline(props: Props) {
         // 녹음본 줄: 첫 녹음본 + 추가 녹음본들 (각자 타임라인에 붙은 한 덩어리, 줄이기는 녹음본마다)
         const recX = r.id === 'rec' ? (live.current.recExtras || []) : [];
         const segs: Clip[] = r.id === 'rec' ? [{ id: 'rec', start: recAt, srcIn: 0, srcOut: r.tr.duration },
-          ...recX.map(x => ({ id: x.key, start: x.at, srcIn: 0, srcOut: x.dur || x.track?.duration || 1 }))] : r.id === 'main' ? clips : clips.filter(c => !c.src);
+          ...recX.map(x => ({ id: x.key, start: x.at, srcIn: 0, srcOut: x.dur || x.track?.duration || 1 }))] : r.id === 'main' ? clips : r.id === 'pip' ? ovList() : clips.filter(c => !c.src);
         for (const c of segs) {
           const rx = r.id === 'rec' && c.id !== 'rec' ? recX.find(x => x.key === c.id) : undefined;
-          const ctr = r.id === 'main' ? ((live.current.srcTrackOf ? live.current.srcTrackOf(c.src) : null) || (c.src ? silentTrack(live.current.srcDurOf?.(c.src) || 1) : r.tr))
+          const ctr = r.id === 'main' || r.id === 'pip' ? ((live.current.srcTrackOf ? live.current.srcTrackOf(c.src) : null) || (c.src ? silentTrack(live.current.srcDurOf?.(c.src) || 1) : r.tr))
             : rx ? (rx.track || silentTrack(rx.dur || 1)) : r.tr;
           if (!ctr) continue;
-          const dur = ctr.duration, tr = r.id === 'main' ? { in: 0, out: 1e9 } : trimOf(p, rx ? c.id : r.id, dur);
+          const dur = ctr.duration, tr = r.id === 'main' || r.id === 'pip' ? { in: 0, out: 1e9 } : trimOf(p, rx ? c.id : r.id, dur);
           const xa = X(c.start), xb = X(clipEnd(c));
           if (xb < 0 || xa > cw) continue;
           const shift = c.start - c.srcIn;              // 타임라인 = 영상 시간 + shift
@@ -432,7 +450,7 @@ export function Timeline(props: Props) {
           const fa = Math.max(c.start, tr.in - r.off + shift, -r.off + shift), fb = Math.min(clipEnd(c), tr.out - r.off + shift, dur - r.off + shift);
           if (fb <= fa) continue;
           const pa = X(fa), pb = X(fb);
-          const selClip = (r.id === 'main' && (isSel('clip:' + c.id) || selClipRef.current === c.id)) || (r.id === 'rec' && (isSel('rec:' + c.id) || (sel && selRecRef.current === c.id)));
+          const selClip = (r.id === 'main' && (isSel('clip:' + c.id) || selClipRef.current === c.id)) || (r.id === 'pip' && sel && selOvRef.current === c.id) || (r.id === 'rec' && (isSel('rec:' + c.id) || (sel && selRecRef.current === c.id)));
           // 조각 상자
           ctx.fillStyle = hexA(r.col, selClip ? 0.28 : 0.13);
           ctx.beginPath(); ctx.roundRect(pa, y + 1.5, Math.max(2, pb - pa), ROW - 3, 5); ctx.fill();
@@ -451,8 +469,8 @@ export function Timeline(props: Props) {
           ctx.restore();
           ctx.globalAlpha = 1;
           // 페이드 (녹음본 조각 · 영상 조각): 어둡게 덮은 삼각형 + 위쪽 손잡이 (끌어서 길이 조절)
-          if (r.id === 'rec' || r.id === 'main') {
-            const key = r.id === 'main' ? 'clip:' + c.id : rx ? c.id : 'rec', f = fadeFor(key, fb - fa);
+          if (r.id === 'rec' || r.id === 'main' || r.id === 'pip') {
+            const key = r.id === 'main' ? 'clip:' + c.id : r.id === 'pip' ? 'ov:' + c.id : rx ? c.id : 'rec', f = fadeFor(key, fb - fa);
             const top = y + 1.5, bot = y + ROW - 1.5, xi = X(fa + f.in), xo = X(fb - f.out);
             ctx.save(); ctx.beginPath(); ctx.roundRect(pa, top, Math.max(2, pb - pa), ROW - 3, 5); ctx.clip();
             ctx.fillStyle = 'rgba(10,8,6,0.55)'; ctx.strokeStyle = 'rgba(255,255,255,0.85)'; ctx.lineWidth = 1.2;
@@ -492,7 +510,7 @@ export function Timeline(props: Props) {
             ctx.beginPath(); ctx.roundRect(side > 0 ? ex : ex - 6, y + 8, 6, ROW - 16, 3); ctx.fill();
           }
           // 영상·녹음본이 여러 개면 조각 위에 파일 이름
-          if (((r.id === 'main' && live.current.srcLabelOf) || (r.id === 'rec' && recX.length)) && pb - pa > 40) {
+          if ((((r.id === 'main' || r.id === 'pip') && live.current.srcLabelOf) || (r.id === 'rec' && recX.length)) && pb - pa > 40) {
             const nm = r.id === 'rec' ? (rx ? rx.name : (live.current.recName || '')) : live.current.srcLabelOf!(c.src);
             if (nm) { ctx.font = '600 10px "IBM Plex Sans KR", sans-serif'; ctx.fillStyle = 'rgba(255,255,255,0.85)'; ctx.textBaseline = 'top'; ctx.fillText(nm, Math.max(pa, 0) + 8, y + ROW - 14, pb - pa - 14); ctx.textBaseline = 'middle'; }
           }
@@ -795,10 +813,12 @@ export function Timeline(props: Props) {
   };
   /** 영상 조각들의 타임라인 범위 (키 'clip:id', 위에 그려진 것부터) */
   const clipPieces = () => clipsOf(live.current.project, live.current.srcDur).map(c => ({ key: 'clip:' + c.id, a: c.start, b: clipEnd(c) })).reverse();
+  const ovPieces = () => ovList().map(c => ({ key: 'ov:' + c.id, a: c.start, b: clipEnd(c) })).reverse();
   /** 페이드 값: 영상 조각은 조각에 저장, 녹음본은 recFades */
   const fadeFor = (key: string, len: number): Fade => {
     const p = live.current.project;
     if (key.startsWith('clip:')) { const c = clipsOf(p, live.current.srcDur).find(x => x.id === key.slice(5)); return c ? clipFade(c) : { in: 0, out: 0 }; }
+    if (key.startsWith('ov:')) { const c = ovList().find(x => x.id === key.slice(3)); return c ? clipFade(c) : { in: 0, out: 0 }; }
     return fadeOf(p, key, len);
   };
   const junctionHover = useRef<string | null>(null);
@@ -819,16 +839,16 @@ export function Timeline(props: Props) {
   /** 녹음본·영상 조각 위쪽의 페이드 손잡이 근처인지 */
   const fadeHandleAt = (clientX: number, clientY: number) => {
     const row = trackAt(clientY);
-    if (!live.current.onFade || (row !== 'rec' && row !== 'main')) return null;
+    if (!live.current.onFade || (row !== 'rec' && row !== 'main' && row !== 'pip')) return null;
     if (row === 'main' && !(live.current.vTrack || live.current.srcDur)) return null;
     const r = canvas.current!.getBoundingClientRect(), v = view.current;
-    const i = row === 'main' ? 0 : 1 + live.current.angleTracks.length, top = RULER + ROWS_Y + i * (ROW + GAP) - scrollY.current;
+    const i = rowIds().indexOf(row), top = RULER + ROWS_Y + i * (ROW + GAP) - scrollY.current;
     const yy = clientY - r.top - top;
     if (yy < 0 || yy > 13) return null;
     const x = clientX - r.left, tx = (t: number) => (t - v.start) * v.pps;
     // 맞닿은 조각 경계에서는 지금 고른 조각의 손잡이를 먼저
-    const selKey = row === 'main' ? (selClipRef.current ? 'clip:' + selClipRef.current : null) : selRecRef.current;
-    const list = row === 'main' ? clipPieces() : recPieces();
+    const selKey = row === 'main' ? (selClipRef.current ? 'clip:' + selClipRef.current : null) : row === 'pip' ? (selOvRef.current ? 'ov:' + selOvRef.current : null) : selRecRef.current;
+    const list = row === 'main' ? clipPieces() : row === 'pip' ? ovPieces() : recPieces();
     list.sort((a, b) => (b.key === selKey ? 1 : 0) - (a.key === selKey ? 1 : 0));
     for (const pc of list) {
       const f = fadeFor(pc.key, pc.b - pc.a);
@@ -1139,6 +1159,21 @@ export function Timeline(props: Props) {
       if (msel.current.size && !typing && (e.code === 'Delete' || e.code === 'Backspace')) { e.preventDefault(); e.stopPropagation(); deleteSelected(); return; }
       if (allSel.current && e.code === 'Escape') { allSel.current = false; force(n => n + 1); e.stopPropagation(); return; }
       if (allSel.current && !typing && (e.code === 'Delete' || e.code === 'Backspace')) { e.preventDefault(); e.stopPropagation(); return; }   // 전체 지우기는 막음 (실수 방지)
+      if (!typing && live.current.selected === 'pip' && selOvRef.current && live.current.onOverlays) {
+        const lp = live.current, id = selOvRef.current;
+        if (e.code === 'Delete' || e.code === 'Backspace') { lp.onOverlays!(ovList().filter(o => o.id !== id)); selOvRef.current = null; e.preventDefault(); e.stopPropagation(); force(n => n + 1); return; }
+        if (e.code === 'KeyI' && !e.ctrlKey && !e.metaKey && !e.altKey) {
+          // 고른 PIP 조각을 재생 위치에서 자르기 (앞 조각 = 페이드 인, 뒤 조각 = 페이드 아웃 이어받음)
+          e.preventDefault(); e.stopPropagation();
+          const t = lp.now(), o = ovList().find(x => x.id === id);
+          if (o && t > o.start + 0.05 && t < clipEnd(o) - 0.05) {
+            const cut = Math.round((o.srcIn + (t - o.start)) * 1000) / 1000, a: Overlay = { ...o, srcOut: cut }, b: Overlay = { ...o, id: 'o' + Date.now().toString(36), start: t, srcIn: cut };
+            delete a.fadeOut; delete b.fadeIn;
+            lp.onOverlays!(ovList().flatMap(x => x.id === id ? [a, b] : [x]));
+          }
+          return;
+        }
+      }
       if (!typing && !e.ctrlKey && !e.metaKey && !e.altKey && e.code === 'KeyI' && (live.current.vTrack || live.current.srcDur || live.current.rTrack)) { e.preventDefault(); e.stopPropagation(); splitAtPlayhead(); return; }
       if (!typing && live.current.selected === 'rec' && selRecRef.current && live.current.onDeleteRec && (e.code === 'Delete' || e.code === 'Backspace')) {
         live.current.onDeleteRec(selRecRef.current); selRecRef.current = null; e.preventDefault(); e.stopPropagation(); return;
@@ -1236,7 +1271,7 @@ export function Timeline(props: Props) {
     if (y >= K_Y - GAP / 2 && y < F_Y - GAP / 2) return 'sheetcard';
     if (y >= F_Y - GAP / 2 && y < ROWS_Y - GAP / 2) return 'fx';
     const i = Math.floor((y - ROWS_Y + GAP / 2) / (ROW + GAP));
-    const ids = ['main', ...live.current.angleTracks.map(a => a.id), 'rec'];
+    const ids = rowIds();
     return i >= 0 && i < ids.length ? ids[i] : null;
   };
 
@@ -1262,11 +1297,22 @@ export function Timeline(props: Props) {
         msel.current = new Set(); allSel.current = false;
         selSheet.current = null;
         if (fh.key.startsWith('clip:')) { live.current.onSelect('main'); pickClip(clipsOf(live.current.project, live.current.srcDur).find(c => c.id === fh.key.slice(5)) || null); }
+        else if (fh.key.startsWith('ov:')) { pickClip(null); selRecRef.current = null; live.current.onSelect('pip'); selOvRef.current = fh.key.slice(3); }
         else { live.current.onSelect('rec'); selRecRef.current = fh.key; }
         fadeDrag.current = { key: fh.key, edge: fh.edge, a: fh.a, b: fh.b };
         force(n => n + 1);
         return;
       }
+    }
+    // PIP 영상 줄: 조각을 누르면 고르기 · 끌면 옮기기 · 양 끝은 줄이기 (빈 곳은 재생 위치)
+    if (!live.current.pick && tr === 'pip' && live.current.onOverlays) {
+      const h = ovAt(e.clientX);
+      msel.current = new Set(); allSel.current = false; selSheet.current = null; pickClip(null); selRecRef.current = null;
+      live.current.onSelect('pip');
+      if (h) { selOvRef.current = h.o.id; ovDrag.current = { id: h.o.id, mode: h.edge || 'move', x0: e.clientX, o0: { ...h.o }, moved: false }; }
+      else { selOvRef.current = null; live.current.onSeek(Math.max(0, timeAt(e.clientX))); }
+      force(n => n + 1);
+      return;
     }
     // 여러 개 고른 상태: 고른 것 중 하나를 잡고 끌면 같이 이동 · 끌지 않고 놓으면 그것 하나만 고름 · 다른 곳을 누르면 풀림
     if (msel.current.size) {
@@ -1484,6 +1530,19 @@ export function Timeline(props: Props) {
       return;
     }
     // 기준 영상 조각 옮기기: 박 단위로 딱딱 (Alt: 자유)
+    if (ovDrag.current) {
+      const d = ovDrag.current;
+      if (!d.moved && Math.abs(e.clientX - d.x0) < 4) return;
+      d.moved = true;
+      const u = snapUnit(), dt = (e.clientX - d.x0) / pps, q = e.altKey ? dt : Math.round(dt / u) * u, o = d.o0, r3 = (v: number) => Math.round(v * 1000) / 1000;
+      let n: Overlay;
+      if (d.mode === 'move') n = { ...o, start: r3(o.start + q) };
+      else if (d.mode === 'in') { const si = Math.max(0, Math.min(o.srcOut - 0.2, o.srcIn + q)); n = { ...o, srcIn: r3(si), start: r3(o.start + (si - o.srcIn)) }; }
+      else { const dur = lp.srcDurOf?.(o.src) || 1e9; n = { ...o, srcOut: r3(Math.min(dur, Math.max(o.srcIn + 0.2, o.srcOut + q))) }; }
+      lp.onOverlays?.(ovList().map(x => x.id === d.id ? n : x));
+      tip.current = { text: d.mode === 'move' ? (e.altKey ? `${q >= 0 ? '+' : ''}${q.toFixed(3)}초` : `${beatsText(q)} · ${unitName(u)} 단위`) : `길이 ${(n.srcOut - n.srcIn).toFixed(1)}초`, x: e.clientX };
+      return;
+    }
     if (clipMove.current) {
       const d = clipMove.current;
       if (!d.moved && Math.abs(e.clientX - d.x0) < 4) return;
@@ -1755,6 +1814,7 @@ export function Timeline(props: Props) {
       if (!d.moved && d.mode === 'move') { const cy = live.current.project.cycle; if (cy) live.current.onCycle({ ...cy, on: !cy.on }); }
       return;
     }
+    if (ovDrag.current) { ovDrag.current = null; tip.current = null; force(n => n + 1); return; }
     if (clipMove.current) { clipMove.current = null; return; }
     if (clipTrim.current) { clipTrim.current = null; return; }
     if (sheetMove.current) { sheetMove.current = null; return; }
@@ -1863,8 +1923,8 @@ export function Timeline(props: Props) {
           const name = (c.sheet || (props.sheetNames || [])[0] || '악보').replace(/\.[^.]+$/, '');
           return <BpmBox key={c.id} label={name} bpm={c.bpm} base={bpmAt(props.project, c.start - 1e-3)} onBpm={b => props.onSheetBpm!(c.id, b)} />;
         })()}
-        {props.onFade && ((props.selected === 'rec' && selRecRef.current) || (props.selected === 'main' && selClipRef.current)) && (() => {
-          const pc = props.selected === 'main' ? clipPieces().find(x => x.key === 'clip:' + selClipRef.current) : recPieces().find(x => x.key === selRecRef.current);
+        {props.onFade && ((props.selected === 'rec' && selRecRef.current) || (props.selected === 'main' && selClipRef.current) || (props.selected === 'pip' && selOvRef.current)) && (() => {
+          const pc = props.selected === 'main' ? clipPieces().find(x => x.key === 'clip:' + selClipRef.current) : props.selected === 'pip' ? ovPieces().find(x => x.key === 'ov:' + selOvRef.current) : recPieces().find(x => x.key === selRecRef.current);
           if (!pc) return null;
           const f = fadeFor(pc.key, pc.b - pc.a);
           return <FadeBox key={pc.key} fade={f} max={pc.b - pc.a} onFade={nf => props.onFade!(pc.key, nf)} />;

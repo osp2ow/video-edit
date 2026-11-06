@@ -1,5 +1,5 @@
 // 미리보기: 렌더러 결과 + 악보 카드 드래그/크기 조절 + 영상 위치 이동·크기·자르기 + 스냅/안전 영역
-import { CardLayout, Project, Ratio, VideoXf, CaptionStyle, CardStyle, getXf, cardAlpha, getFx, angleAt, srcAt, PipPos } from './model';
+import { CardLayout, Project, Ratio, VideoXf, CaptionStyle, CardStyle, getXf, cardAlpha, getFx, angleAt, srcAt, PipPos, overlaysAt } from './model';
 import { styleFor } from './render';
 import { SheetData } from './sheet';
 import { safeZones } from './render';
@@ -7,7 +7,7 @@ export { safeZones };
 import { cardBox, drawVideo, drawCard, drawCaptions, FONT, videoRect, croppedRect, captionBox, captionStyleOf, activeCaptions, cardMetrics, sheetZoom } from './render';
 import { Angle, activeSource } from './angles';
 import { isExporting } from './exporter';
-import { renderComposite, sheetAt, activeTitleCard, cardSafeRect, clampCardY, CardLayoutResult, pipBox } from './effects';
+import { renderComposite, sheetAt, activeTitleCard, cardSafeRect, clampCardY, CardLayoutResult, pipBox, ovBox } from './effects';
 
 const { useRef, useEffect, useState } = React;
 
@@ -30,6 +30,8 @@ interface Props {
   viewLabel: string;
   onXf: (id: string, xf: VideoXf) => void;
   onPip?: (pos: PipPos | null) => void;
+  ovEls?: Map<string, HTMLVideoElement>;              // PIP 영상 조각별 <video>
+  onOvPos?: (id: string, pos: PipPos | null) => void;  // PIP 영상 옮기기·크기 (null = 기본 자리로)
   levelGrid?: boolean;   // 수평 맞추기용 격자
   onEditChord?: (id: string) => void;   // 코드표 더블클릭 → 코드표 패널
   onChordSize?: (size: number) => void;   // 코드표 모서리 끌기 → 크기 (모든 코드표 공통)   // PIP 작은 화면 옮기기·크기 (null = 기본 자리로)
@@ -66,7 +68,7 @@ interface Drag {
   cap0?: CaptionStyle; capId?: string;
   tcKind?: 'intro' | 'outro'; tcBox?: CardLayoutResult;   // 인트로·엔딩 카드 글상자
   guides: { x?: number; y?: number }[];
-  pip0?: { x: number; y: number; w: number; h: number; ar: number };   // PIP 작은 화면 (드래그 시작 때)
+  pip0?: { x: number; y: number; w: number; h: number; ar: number; ov?: string };   // PIP 작은 화면 (드래그 시작 때)
 }
 
 export function Preview(props: Props) {
@@ -85,7 +87,7 @@ export function Preview(props: Props) {
     const x = (e.clientX - r.left) * (W / r.width), y = (e.clientY - r.top) * (H / r.height);
     const tch = tcHit(x, y);
     if (tch) { live.current.onPause?.(); live.current.onEditCard?.(tch.kind, tch.page); return; }
-    if (!capHit(x, y) && pipHit(x, y)) { live.current.onPip?.(null); return; }   // PIP 더블클릭: 기본 자리로
+    if (!capHit(x, y) && pipHit(x, y)) { const b = pipNow(); if (b?.ov) live.current.onOvPos?.(b.ov, null); else live.current.onPip?.(null); return; }   // PIP 더블클릭: 기본 자리로
     {
       // 악보 위·아래 가장자리 더블클릭: 자동 여백으로 되돌림
       const hm = hit(x, y);
@@ -125,7 +127,7 @@ export function Preview(props: Props) {
         if (cropMode && src && xf && src.video.videoWidth) {
           drawCropView(ctx, w, h, src.video, xf);
         } else {
-          renderComposite(ctx, w, h, t, { master: video, angles, sources: live.current.sources, project, sheet: live.current.sheet, sheets: live.current.sheets, layout, range: [0, Math.max(video.duration || 0, live.current.tlEnd || 0)] },
+          renderComposite(ctx, w, h, t, { master: video, angles, sources: live.current.sources, overlays: live.current.ovEls, project, sheet: live.current.sheet, sheets: live.current.sheets, layout, range: [0, Math.max(video.duration || 0, live.current.tlEnd || 0)] },
             { viewTrack: live.current.viewTrack, beforeCard: showSafe ? () => drawSafe(ctx, w, h, ratio) : undefined, ghostCard: false, preview: true });
           if (!hasVideo && showSafe) drawSafe(ctx, w, h, ratio);
           if (!clean) {
@@ -198,10 +200,16 @@ export function Preview(props: Props) {
   };
 
   /** 지금 화면에 PIP 작은 화면이 보이면 그 자리 (픽셀) */
-  const pipNow = () => {
+  const pipNow = (): (ReturnType<typeof pipBox> & { ov?: string }) | null => {
     const p = live.current;
-    if (p.viewTrack || p.cropMode || !p.hasVideo || !p.angles.length || p.clean) return null;
+    if (p.viewTrack || p.cropMode || !p.hasVideo || p.clean) return null;
     const t = p.now();
+    // PIP 영상 줄 (맨 위에 그려진 것부터)
+    if (p.onOvPos) for (const o of overlaysAt(p.project, t).reverse()) {
+      const el = p.ovEls?.get(o.id);
+      return { ...ovBox(W, H, o, el?.videoWidth, el?.videoHeight), ov: o.id };
+    }
+    if (!p.angles.length) return null;
     if (angleAt(p.project.cuts, t) !== 'pip') return null;
     if (srcAt(p.project, t, p.video.duration || 0)?.clip.src) return null;   // 이어 붙인 영상 구간엔 PIP 없음
     return pipBox(W, H, p.project);
@@ -328,13 +336,15 @@ export function Preview(props: Props) {
         for (const [tg, gl] of sy) if (Math.abs(ny - tg) < th) { ny = tg; guides.push({ y: gl }); break; }
         nx = Math.max(0, Math.min(W - b.w, nx)); ny = Math.max(0, Math.min(H - b.h, ny));
         d.guides = guides;
-        p.onPip?.({ x: nx / W, y: ny / H, w: b.w / W });
+        const pos = { x: nx / W, y: ny / H, w: b.w / W };
+        if (b.ov) p.onOvPos?.(b.ov, pos); else p.onPip?.(pos);
       } else {
         let nw = b.w + (x - d.sx);
         nw = Math.max(W * 0.15, Math.min(W - b.x, (H - b.y) / b.ar, nw));
         if (Math.abs(b.x + nw - (W - mg)) < th) { nw = W - mg - b.x; guides.push({ x: W - mg }); }
         d.guides = guides;
-        p.onPip?.({ x: b.x / W, y: b.y / H, w: nw / W });
+        const pos = { x: b.x / W, y: b.y / H, w: nw / W };
+        if (b.ov) p.onOvPos?.(b.ov, pos); else p.onPip?.(pos);
       }
       return;
     }

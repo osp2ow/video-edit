@@ -8,7 +8,7 @@ import { renderComposite, clipTransitionAt } from './effects';
 import { openFrameSource, FrameSource } from './decoder';
 import { MAIN } from './model';
 import { preloadCaptionFonts } from './render';
-import { getFx, trimOf, clipsOf, clipEnd, Clip, recAtOf, recKeyOf, MAIN_REC, fadeOf, scheduleFade, clipFade, Fade } from './model';
+import { getFx, trimOf, clipsOf, clipEnd, Clip, recAtOf, recKeyOf, MAIN_REC, fadeOf, scheduleFade, clipFade, Fade, overlaysAt } from './model';
 
 // TS 기본 타입에 아직 없는 WebCodecs 오디오 API
 declare const AudioEncoder: any;
@@ -34,6 +34,7 @@ export interface ExportInput {
   sheets?: Map<string, SheetData>;                  // 두 번째부터 넣은 악보들
   extraRecs?: Map<string, AudioBuffer>;             // 두 번째부터 넣은 녹음본들
   sourceAudio?: Map<string, AudioBuffer | null>;    // 그 영상들의 소리
+  ovEls?: Map<string, HTMLVideoElement>;            // PIP 영상 조각별 <video> (파일에서 직접 못 풀 때만 씀)
 }
 
 export interface CodecPlan { video: string; muxVideo: 'avc' | 'vp9'; audio: string; muxAudio: 'aac' | 'opus'; standard: boolean }
@@ -161,6 +162,12 @@ export async function mixAudio(inp: ExportInput, start: number, end: number): Pr
     const vbuf = pc.clip.src ? inp.sourceAudio?.get(pc.clip.src) ?? null : inp.masterAudio;
     if (vbuf && !p.videoMuted && p.videoVol > 0) placeAt(vbuf, outAt, s0, len, p.videoVol, 0, vbuf.duration, { TS: pc.clip.start, TE: clipEnd(pc.clip), f: clipFade(pc.clip) });
   }
+  // PIP 영상: 소리를 켠 조각만 (그 조각이 놓인 그대로)
+  if (!p.videoMuted && p.videoVol > 0) for (const o of p.overlays || []) {
+    const b = o.sound ? inp.sourceAudio?.get(o.src) : null; if (!b) continue;
+    const a = Math.max(start, o.start), e = Math.min(end, clipEnd(o)); if (e - a <= 0.001) continue;
+    placeAt(b, a - start, o.srcIn + (a - o.start), e - a, p.videoVol, 0, b.duration, { TS: o.start, TE: clipEnd(o), f: clipFade(o) });
+  }
   if (inp.recAudio && !p.recMuted && p.recVol > 0) {
     const tr = trimOf(p, 'rec', inp.recAudio.duration), recAt = recAtOf(p, srcDur);
     placeAt(inp.recAudio, 0, start - recAt, end - start, p.recVol, tr.in, tr.out, { TS: recAt + tr.in, TE: recAt + tr.out, f: fadeOf(p, 'rec', tr.out - tr.in) });
@@ -251,9 +258,24 @@ export async function exportMp4(inp: ExportInput, o: ExportOptions, plan: CodecP
   const used = new Set(pieces.filter(pc => pc.clip).map(pc => pc.clip!.src || MAIN));
   const decoded = await openDecoded(master, inp.angles, srcEls, used);
   const snapPool = new Map<string, HTMLCanvasElement>();
+  // PIP 영상: 조각마다 따로 풀기 (같은 영상이 기준 화면에도 동시에 나올 수 있어서 디코더를 따로)
+  const ovDec = new Map<string, FrameSource>();
+  if (decoded) for (const o of inp.project.overlays || []) {
+    if (clipEnd(o) <= start || o.start >= end) continue;
+    const el = srcEls.get(o.src); if (!el) continue;
+    try { const d = await openFrameSource(await (await fetch(el.currentSrc || el.src)).blob()); if (d) ovDec.set(o.id, d); }
+    catch (e) { console.warn('[추출] PIP 영상 풀기 실패', o.src, e); }
+  }
+  const ovFrames = async (T: number, m: Map<string, HTMLVideoElement | null>) => {
+    for (const o of overlaysAt(inp.project, T)) { const d = ovDec.get(o.id); m.set('ov:' + o.id, d ? (await d.frameAt(o.srcIn + (T - o.start))) as any : null); }
+  };
   let frames: Map<string, HTMLVideoElement | null> | undefined, framesFrom: Map<string, HTMLVideoElement | null> | undefined;
   const emitFrame = (T: number) => {
-    renderComposite(ctx, W, H, T, { master, angles: inp.angles, sources: srcEls, sheets: inp.sheets, project: inp.project, sheet: inp.sheet, layout: inp.layout, range: [start, end], frames, framesFrom });
+    if (!decoded && inp.ovEls) for (const o of overlaysAt(inp.project, T)) {   // 재생하며 받기: PIP 영상은 그 시각으로 옮겨 둠 (근사)
+      const el = inp.ovEls.get(o.id), s = o.srcIn + (T - o.start);
+      if (el && !el.seeking && Math.abs(el.currentTime - s) > 0.04) el.currentTime = s;
+    }
+    renderComposite(ctx, W, H, T, { master, angles: inp.angles, sources: srcEls, sheets: inp.sheets, project: inp.project, sheet: inp.sheet, layout: inp.layout, range: [start, end], frames, framesFrom, overlays: inp.ovEls });
     const vf = new VideoFrame(canvas, { timestamp: Math.round(k / o.fps * 1e6), duration: Math.round(1e6 / o.fps) });
     venc.encode(vf, { keyFrame: k % (o.fps * 2) === 0 });
     vf.close();
@@ -307,6 +329,7 @@ export async function exportMp4(inp: ExportInput, o: ExportOptions, plan: CodecP
           frames = await framesOf(ct.B, ct.tB);
         }
         else frames = pc.clip ? await framesOf(pc.clip, T) : new Map();
+        if (ovDec.size) await ovFrames(T, frames!);
         emitFrame(T);
         await drain();
         if (k % 15 === 0) onProgress(k / total, '영상 만드는 중');
@@ -403,6 +426,7 @@ export async function exportMp4(inp: ExportInput, o: ExportOptions, plan: CodecP
     for (const o of saved) { o.v.muted = o.muted; o.v.playbackRate = o.rate; }
     setExporting(false);
     if (decoded) { decoded.main?.close(); for (const d of decoded.angles.values()) d.close(); for (const d of decoded.sources.values()) d.close(); }
+    for (const d of ovDec.values()) d.close();
     if (drops) console.info(`[추출] 프레임 놓침 ${drops}번 → 되감아서 다시 받음 (마지막 속도 ${Math.round(rate * 100)}%)`);
   }
   onProgress(1, '마무리 중');

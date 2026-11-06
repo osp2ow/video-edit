@@ -2,7 +2,7 @@
 // 영상들은 이 시계를 따라감 — 지금 T에 놓인 조각의 영상 파일(<video>)을 그 조각의 영상 시간으로 맞추고,
 // 조금 어긋나면 재생 속도를 살짝 바꿔서, 많이 어긋나면 위치를 옮겨서 맞춘다. 조각 사이 빈자리는 검은 화면.
 // 앵글은 첫 영상(MAIN)에 붙어 있어서 그 영상이 움직이면 같이 따라감 (followMaster).
-import { Project, Clip, clipsOf, clipEnd, MAIN, clipFadeAt } from './model';
+import { Project, Clip, clipsOf, clipEnd, MAIN, clipFadeAt, Overlay } from './model';
 import { Player } from './player';
 
 export class Transport {
@@ -13,6 +13,8 @@ export class Transport {
   private cur: Clip | null = null;
   private starting = 0;          // 재생 시작 준비 중 (영상 위치 잡는 동안)
   onState: () => void = () => {};
+  /** PIP 영상 조각마다 전용 <video> (조각 id → 영상) — 기준 화면과 따로 같이 재생 */
+  ovEls: () => Map<string, HTMLVideoElement> = () => new Map();
 
   constructor(public els: () => Map<string, HTMLVideoElement>, public getProject: () => Project, public getDur: () => number,
     public getEnd: () => number, public player: Player) {
@@ -52,9 +54,54 @@ export class Transport {
     const c = this.clipAt(T), el = this.elOf(c);
     this.cur = c;
     for (const v of this.els().values()) if (v !== el && !v.paused) v.pause();
+    this.syncOv(T, hold);
     if (!c || !el) return;
     const s = c.srcIn + (T - c.start);
     if (Math.abs(el.currentTime - s) > 0.002) this.jump(el, s, hold);
+  }
+
+  /** PIP 영상들을 시계에 맞춤: 지금 보이는 조각은 그 위치로(재생 중이면 같이 재생), 아닌 것은 멈춤 */
+  private syncOv(T: number, running: boolean) {
+    const els = this.ovEls(); if (!els.size) return;
+    const p = this.getProject();
+    for (const o of (p.overlays || []) as Overlay[]) {
+      const el = els.get(o.id); if (!el) continue;
+      const on = T >= o.start - 1e-6 && T < clipEnd(o) - 1e-6;
+      if (!on) {
+        if (!el.paused) el.pause();
+        // 곧 나올 조각은 첫 장면을 미리 잡아 둠
+        if (o.start > T && o.start < T + 1.2 && !el.seeking && Math.abs(el.currentTime - o.srcIn) > 0.05) el.currentTime = o.srcIn;
+        continue;
+      }
+      const s = o.srcIn + (T - o.start);
+      const vol = o.sound && !p.videoMuted ? Math.max(0, Math.min(1, p.videoVol * clipFadeAt(o, T))) : 0;
+      el.muted = vol <= 0; if (vol > 0 && Math.abs(el.volume - vol) > 0.004) el.volume = vol;
+      if (!running || !this.playing) {
+        if (!el.paused) el.pause();
+        if (Math.abs(el.currentTime - s) > 0.002 && !el.seeking) this.jump(el, s, false);
+      } else this.follow(el, s);
+    }
+  }
+
+  /** PIP 영상 조각이 바뀌었을 때(옮기기·줄이기·새로 넣기) 다시 맞춤 */
+  resyncOv() { this.syncOv(this.time(), this.playing && !this.starting); }
+
+  /** 재생 중인 영상을 시계 위치 s에 맞춰 따라가게 */
+  private follow(el: HTMLVideoElement, s: number) {
+    const lead = Math.min(1.5, (el as any).__seekLat || 0);   // 위치 찾는 동안 시계가 흘러갈 만큼 앞을 찾음
+    if (el.paused || el.ended) {
+      // 다른 영상으로 막 넘어온 순간: 위치를 찾는 중이면 다시 지정하지 않고 기다림
+      // (예전에는 매 순간 다시 지정해서 찾기가 끝나지 않고 재생도 시작되지 않아 멈춰 보였음)
+      if (!el.seeking && Math.abs(el.currentTime - s) > 0.04) this.jump(el, s + (el.readyState >= 3 ? 0 : lead));
+      el.playbackRate = 1;
+      el.play().catch(() => {});   // 찾는 중이어도 재생을 걸어 두면 준비되는 대로 나옴
+    } else if (!el.seeking && !(el as any).__seekHold) {
+      // 영상이 시계보다 앞서거나 늦으면: 조금이면 재생 속도로, 많이면 위치를 옮겨서 맞춤
+      const drift = s - el.currentTime;
+      if (Math.abs(drift) > 0.25) { el.playbackRate = 1; this.jump(el, s + (drift > 0 ? lead : 0)); }
+      else if (Math.abs(drift) > 0.02) el.playbackRate = 1 + Math.max(-0.1, Math.min(0.1, drift * 1.5));
+      else if (el.playbackRate !== 1) el.playbackRate = 1;
+    }
   }
 
   /** 영상 위치 옮기기: 새 위치의 장면이 실제로 나올 때까지 미리보기는 마지막 장면을 유지
@@ -117,6 +164,8 @@ export class Transport {
     this.starting = 0;
     this.player.stop();
     for (const v of this.els().values()) { if (!v.paused) v.pause(); v.playbackRate = 1; }
+    for (const v of this.ovEls().values()) { if (!v.paused) v.pause(); v.playbackRate = 1; }
+    this.syncOv(this.T, false);
     this.onState();
   }
   toggle() { if (this.playing) this.pause(); else this.play(); }
@@ -136,21 +185,9 @@ export class Transport {
       const s = c.srcIn + (t - c.start);
       // 영상 조각 페이드: 그 영상 소리도 같이 작게
       if (!p.videoMuted) { const vol = Math.max(0, Math.min(1, p.videoVol * clipFadeAt(c, t))); if (Math.abs(el.volume - vol) > 0.004) el.volume = vol; }
-      const lead = Math.min(1.5, (el as any).__seekLat || 0);   // 위치 찾는 동안 시계가 흘러갈 만큼 앞을 찾음
-      if (el.paused || el.ended) {
-        // 다른 영상으로 막 넘어온 순간: 위치를 찾는 중이면 다시 지정하지 않고 기다림
-        // (예전에는 매 순간 다시 지정해서 찾기가 끝나지 않고 재생도 시작되지 않아 멈춰 보였음)
-        if (!el.seeking && Math.abs(el.currentTime - s) > 0.04) this.jump(el, s + (el.readyState >= 3 ? 0 : lead));
-        el.playbackRate = 1;
-        el.play().catch(() => {});   // 찾는 중이어도 재생을 걸어 두면 준비되는 대로 나옴
-      } else if (!el.seeking && !(el as any).__seekHold) {
-        // 영상이 시계보다 앞서거나 늦으면: 조금이면 재생 속도로, 많이면 위치를 옮겨서 맞춤
-        const drift = s - el.currentTime;
-        if (Math.abs(drift) > 0.25) { el.playbackRate = 1; this.jump(el, s + (drift > 0 ? lead : 0)); }
-        else if (Math.abs(drift) > 0.02) el.playbackRate = 1 + Math.max(-0.1, Math.min(0.1, drift * 1.5));
-        else if (el.playbackRate !== 1) el.playbackRate = 1;
-      }
+      this.follow(el, s);
     }
+    this.syncOv(t, true);
     // 다음 조각이 다른 영상이면 미리 위치를 잡아 둠 (넘어가는 순간 멈칫하지 않게)
     const next = this.clips().find(x => x.start > t + 1e-3 && x.start < t + 1.2);
     if (next) {

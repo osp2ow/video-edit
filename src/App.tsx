@@ -148,6 +148,8 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const srcMap = useMemo(() => new Map(sources.map(x => [x.id, x.video] as [string, HTMLVideoElement])), [sources.map(x => x.id).join('|')]);
   const sourcesRef = useRef<VSource[]>([]);
   sourcesRef.current = sources;
+  // PIP 영상 조각마다 전용 <video> (같은 영상이 기준 화면에 동시에 나와도 따로 재생되게)
+  const ovElsRef = useRef(new Map<string, HTMLVideoElement>());
   const elsMap = () => { const m = new Map<string, HTMLVideoElement>(); if (videoRef.current) m.set(MAIN, videoRef.current); for (const x of sourcesRef.current) m.set(x.id, x.video); return m; };
   const masterDur = () => videoRef.current?.duration || 0;
   /** 그 영상 파일 길이 (src 없으면 첫 영상) */
@@ -277,6 +279,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     const unfollow = followMaster(v, () => anglesRef.current, () => projRef.current);
     // 재생 시계: 타임라인 시간 기준 (녹음본이 메인 · 영상들은 시계를 따라감 · 조각 이동·빈자리·구간 반복)
     const tr = new Transport(elsMap, () => projRef.current, () => v.duration || 0, () => endRef.current, playerRef.current);
+    tr.ovEls = () => ovElsRef.current;
     transportRef.current = tr;
     (window as any).__pveTransport = tr;   // 점검용
     tr.onState = () => setPlaying(tr.playing);
@@ -658,15 +661,65 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     const r = syncOffset(x.track, rTrack, Math.min(900, Math.max(rTrack.duration, x.dur) + 5));
     if (r.confidence <= 1.1) { setMsg({ kind: 'warn', text: '소리가 비슷한 곳을 확실히 찾지 못했어요. 영상 조각을 끌어서 맞춰 주세요.' }); return; }
     const p = projRef.current, recAt = recAtOf(p, masterDur());
-    setProject({ clips: clipsOf(p, masterDur()).map(c => c.src === id ? { ...c, start: Math.round((recAt + r.offset + c.srcIn) * 1000) / 1000 } : c), skips: [] });
+    const at = (c: Clip) => Math.round((recAt + r.offset + c.srcIn) * 1000) / 1000;
+    setProject({ clips: clipsOf(p, masterDur()).map(c => c.src === id ? { ...c, start: at(c) } : c), skips: [],
+      ...(p.overlays?.some(o => o.src === id) ? { overlays: p.overlays.map(o => o.src === id ? { ...o, start: at(o) } : o) } : {}) });
     setMsg({ kind: 'ok', text: `${x.name}을 녹음본에 맞췄어요.` });
+  };
+  /** 추가 영상을 PIP 줄로 (영상 줄의 그 영상 조각들을 같은 자리 그대로 옮김 → 기준 영상 위에 작게 같이 재생) · 다시 누르면 영상 줄로 */
+  const toggleOverlay = (id: string) => {
+    const p = projRef.current, cs = clipsOf(p, masterDur()), ovs = p.overlays || [];
+    const mine = ovs.filter(o => o.src === id);
+    if (mine.length) {
+      setProject({ overlays: ovs.filter(o => o.src !== id), clips: [...cs, ...mine.map(({ box, sound, ...c }) => ({ ...c }))], skips: [] });
+      setMsg({ kind: 'ok', text: '영상 줄로 되돌렸어요. 그 구간은 이 영상만 화면 가득 나와요.' });
+      return;
+    }
+    let move = cs.filter(c => c.src === id);
+    if (!move.length) {
+      // 영상 줄에 없으면 재생 위치에 처음부터 끝까지
+      const x = sourcesRef.current.find(v => v.id === id); if (!x) return;
+      move = [{ id: 'c' + Date.now().toString(36), start: Math.round(tnow() * 1000) / 1000, srcIn: 0, srcOut: x.dur || 1, src: id }];
+    }
+    const rest = cs.filter(c => c.src !== id);
+    if (!rest.length) { setMsg({ kind: 'info', text: 'PIP는 다른 영상 위에 작게 나와요. 먼저 화면 가득 나올 영상을 넣어주세요.' }); return; }
+    // 다른 영상과 전혀 겹치지 않으면(소리로 자리를 못 찾아 맨 뒤에 붙은 경우) 재생 위치(그 자리에 영상이 없으면 첫 영상 시작)로
+    const a0 = Math.min(...move.map(c => c.start)), b0 = Math.max(...move.map(clipEnd));
+    const over = rest.some(c => c.start < b0 - 0.05 && clipEnd(c) > a0 + 0.05);
+    if (!over) {
+      const t = tnow(), at = rest.some(c => t >= c.start && t < clipEnd(c)) ? t : rest[0].start, d = Math.round((at - a0) * 1000) / 1000;
+      move = move.map(c => ({ ...c, start: c.start + d }));
+    }
+    setProject({ clips: rest, skips: [], overlays: [...ovs, ...move.map(({ trIn, ...c }) => ({ ...c, src: id, id: 'o' + c.id }))] });
+    setMsg({ kind: 'ok', text: `PIP 줄로 옮겼어요. 그 시간 동안 기준 영상 위에 작게 같이 나와요 (미리보기에서 끌어서 옮기고, 모서리로 크기 조절).` });
+  };
+  // PIP 영상 조각별 <video> 만들기·정리 (추가 영상 파일과 같은 주소를 씀)
+  useEffect(() => {
+    const m = ovElsRef.current, want = new Map((project.overlays || []).map(o => [o.id, o] as const));
+    const srcUrl = (src: string) => sourcesRef.current.find(x => x.id === src)?.video.src || '';
+    for (const [id, el] of [...m]) {
+      const o = want.get(id);
+      if (!o || el.src !== srcUrl(o.src)) { el.pause(); el.removeAttribute('src'); el.load(); el.remove(); m.delete(id); }
+    }
+    for (const o of want.values()) {
+      if (m.has(o.id)) continue;
+      const url = srcUrl(o.src); if (!url) continue;
+      const el = makeAngleVideo(); el.src = url; m.set(o.id, el);
+      el.addEventListener('loadeddata', () => transportRef.current?.resyncOv(), { once: true });
+    }
+    transportRef.current?.resyncOv();
+    // eslint-disable-next-line
+  }, [project.overlays, sources]);
+  const setOvSound = (id: string, on: boolean) => {
+    const p = projRef.current;
+    setProject({ overlays: (p.overlays || []).map(o => o.src === id ? { ...o, sound: on } : o) });
   };
   const removeSource = (id: string) => {
     const x = sourcesRef.current.find(v => v.id === id); if (!x) return;
     x.video.pause(); URL.revokeObjectURL(x.video.src); x.video.remove();
     setSources(ss => ss.filter(v => v.id !== id));
     const p = projRef.current;
-    if (p.clips) setProject({ clips: p.clips.filter(c => c.src !== id) });
+    if (p.clips || p.overlays) setProject({ ...(p.clips ? { clips: p.clips.filter(c => c.src !== id) } : {}), ...(p.overlays ? { overlays: p.overlays.filter(o => o.src !== id) } : {}) });
     if (cloud?.storage && currentRef.current) {
       const pid = currentRef.current;
       queue(async () => {
@@ -757,7 +810,8 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     if (nid !== oldId) {
       const p = projRef.current, frames = { ...(p.frames || {}) };
       for (const r of Object.keys(frames) as Ratio[]) frames[r] = renameKeys(frames[r], oldId, nid);
-      setProject({ clips: clipsOf(p, masterDur()).map(c => c.src === oldId ? { ...c, src: nid } : c), frames, skips: [] });
+      setProject({ clips: clipsOf(p, masterDur()).map(c => c.src === oldId ? { ...c, src: nid } : c), frames, skips: [],
+        ...(p.overlays ? { overlays: p.overlays.map(o => o.src === oldId ? { ...o, src: nid } : o) } : {}) });
       dropCloudRef('sources', oldId);
     }
     await addSource(file, true);
@@ -1298,7 +1352,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     return {
       master: videoRef.current!, angles: anglesRef.current, project: projRef.current, sheet,
       layout: layoutFor(layouts, r), masterAudio: mAudio, recAudio: playerRef.current?.recBuf || null,
-      sources: srcMap, sourceAudio: sAudio, sheets: sheetMap, extraRecs: playerRef.current?.extraBufs,
+      sources: srcMap, sourceAudio: sAudio, sheets: sheetMap, extraRecs: playerRef.current?.extraBufs, ovEls: ovElsRef.current,
     };
   };
 
@@ -1442,6 +1496,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     if (videoName || p.clips?.length) for (const c of clipsOf(p, masterDur())) if (clipEnd(c) - c.start > 0.01) xs.push(c.start);
     if (rTrack) { const tr = trimOf(p, 'rec', rTrack.duration); if (tr.out - tr.in > 0.01) xs.push(recAtOf(p, masterDur()) + tr.in); }
     for (const c of p.recClips || []) { const d = recDurOf(c.src); if (d) { const tr = trimOf(p, recKeyOf(c), d); if (tr.out - tr.in > 0.01) xs.push(c.at + tr.in); } }
+    for (const o of p.overlays || []) xs.push(o.start);
     const media = xs.length ? Math.min(...xs) : NaN;
     if (sheet) for (const c of sheetClipsOf(p, sheet.bars.length)) xs.push(c.start);
     for (const c of p.captions || []) xs.push(c.start);
@@ -1728,6 +1783,13 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
                   <span className="src-num">영상 {i + 2}</span>
                   <span className="src-name" title={x.name}>{x.name}</span>
                   {!x.track ? <span className="dim small">분석 중</span> : rTrack && <button type="button" className="link small" onClick={() => resyncSource(x.id)} title="이 영상의 소리를 녹음본에 다시 맞춰요">녹음본에 맞추기</button>}
+                  {(() => {
+                    const ov = (project.overlays || []).filter(o => o.src === x.id);
+                    return <>
+                      <button type="button" className={`link small${ov.length ? ' on' : ''}`} onClick={() => toggleOverlay(x.id)} title={ov.length ? '영상 줄로 되돌리기 (화면 가득)' : '기준 영상 위에 작게 같이 나오게 (같은 시간 그대로)'}>{ov.length ? 'PIP 끄기' : 'PIP로'}</button>
+                      {ov.length > 0 && <label className="row tight small" title="PIP 영상의 소리도 같이 내기"><input type="checkbox" checked={ov.some(o => o.sound)} onChange={e => setOvSound(x.id, e.target.checked)} />소리</label>}
+                    </>;
+                  })()}
                   <ReplaceBtn id={`rep-src-${i}`} accept="video/*,.mov,.mp4,.m4v,.webm" onFile={f => replaceSource(x.id, f)} />
                   <button type="button" className="link small danger" onClick={() => removeSource(x.id)}>빼기</button>
                 </div>
@@ -1973,7 +2035,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             levelGrid={levelGrid}
             onEditChord={id => { setSelCaption(id); setChordOpen(true); }}
             onChordSize={s => setChordPos({ size: s })}
-            onPip={pos => { const pp = { ...(projRef.current.pip || {}) }; if (pos) pp[ratio] = pos; else delete pp[ratio]; setProject({ pip: pp }); }} />
+            onPip={pos => { const pp = { ...(projRef.current.pip || {}) }; if (pos) pp[ratio] = pos; else delete pp[ratio]; setProject({ pip: pp }); }}
+            ovEls={ovElsRef.current}
+            onOvPos={(id, pos) => { const ovs = projRef.current.overlays || [], src = ovs.find(o => o.id === id)?.src; setProject({ overlays: ovs.map(o => { if (o.src !== src) return o; const b = { ...(o.box || {}) }; if (pos) b[ratio] = pos; else delete b[ratio]; return { ...o, box: b }; }) }); }} />
           <NeededFiles need={needList} onClose={() => setWant(null)} />
           {remoteEdit && (
             <div className="remote-edit" role="alert">
@@ -2205,6 +2269,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
           playing={playing}
           onClips={list => setProject({ clips: list, skips: [], trims: { ...(projRef.current.trims || {}), main: undefined as any } })}
           reveal={reveal}
+          onOverlays={list => setProject({ overlays: list })}
           onClipsRec={(list, recs) => {
             const p = projRef.current;
             let patch: Partial<Project> = { clips: list, skips: [], trims: { ...(p.trims || {}), main: undefined as any } };
@@ -2220,6 +2285,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
           onFade={(key, f) => {
             const p = projRef.current;
             if (key.startsWith('clip:')) setProject({ clips: clipsOf(p, masterDur()).map(c => c.id === key.slice(5) ? { ...c, fadeIn: f.in, fadeOut: f.out } : c), skips: [] });
+            else if (key.startsWith('ov:')) setProject({ overlays: (p.overlays || []).map(o => o.id === key.slice(3) ? { ...o, fadeIn: f.in, fadeOut: f.out } : o) });
             else setProject({ recFades: { ...(p.recFades || {}), [key]: f } });
           }}
           selFx={selFx} onSelectFx={sf => { setSelFx(sf); if (sf) setRightTab('fx'); }} onFxItems={patch => setFx(patch)} onAddPunch={(t: number) => addPunchAt(t)}

@@ -1368,7 +1368,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
       if (e.altKey && (e.code === 'ArrowLeft' || e.code === 'ArrowRight') && selTrack !== 'program' && selTrack !== 'main') {
         e.preventDefault();
         const d = (e.code === 'ArrowLeft' ? -1 : 1) * (e.shiftKey ? 0.001 : 0.01);
-        if (selTrack === 'rec') setProject({ ...recPatch(Math.round((recAtNow() + d) * 1000) / 1000), syncTouched: true });
+        if (selTrack === 'rec') setProject({ recAt: Math.round((recAtNow() + d) * 1000) / 1000, syncTouched: true });   // 녹음본만 (마디 눈금은 그대로)
         else setProject({ angleOffsets: { ...projRef.current.angleOffsets, [selTrack]: Math.round(((projRef.current.angleOffsets[selTrack] || 0) - d) * 1000) / 1000 } });
         return;
       }
@@ -2193,7 +2193,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
           onSelectCard={(k, edit) => { setSelCard(k); if (k) { setRightTab('fx'); if (edit) setTimeout(() => (document.getElementById(k + '-title') as HTMLInputElement | null)?.focus(), 60); } }}
           pick={pickRange} onPick={(a, b) => setPickRange({ a, b })}
           onSheetClips={list => setProject({ sheetClips: list || undefined })} hasSheet={!!sheet}
-          onSlip={(id, off) => id === 'rec' ? setProject({ ...recPatch(off), syncTouched: true })
+          onSlip={(id, off) => id === 'rec' ? setProject({ recAt: off, syncTouched: true })   // 녹음본만 옮김 — 위 마디 눈금은 그대로 (영상 옮기기와 같게)
             : id.startsWith('recx:') ? setProject({ recClips: (projRef.current.recClips || []).map(c => recKeyOf(c) === id ? { ...c, at: off } : c) })
             : setProject({ angleOffsets: { ...projRef.current.angleOffsets, [id]: off } })}
           recAt={recAtOf(project, duration)}
@@ -2209,7 +2209,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             const p = projRef.current;
             let patch: Partial<Project> = { clips: list, skips: [], trims: { ...(p.trims || {}), main: undefined as any } };
             for (const r of recs) {
-              if (r.id === 'rec') patch = { ...patch, ...recPatch(r.at) };
+              if (r.id === 'rec') patch = { ...patch, recAt: r.at };
               else patch.recClips = (patch.recClips || p.recClips || []).map(c => recKeyOf(c) === r.id ? { ...c, at: r.at } : c);
             }
             setProject(patch);

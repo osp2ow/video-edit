@@ -41,7 +41,7 @@ ok('preview unchanged after picking the video track (effects view kept)', h0 ===
 await remeasure();
 // 2) 첫 영상 조각 끌기 → 녹음본 따라옴
 const other0 = cs()[1], ref = pp => pp.clips.find(c => c.id === other0.id).start;
-const r0 = recAt(p) - ref(p), s0 = c1.start - ref(p);
+const r0 = recAt(p) - ref(p), s0 = c1.start - ref(p), a0 = p.anchorTime - ref(p);
 await page.mouse.move(X(c1.start + 5.5), MAIN_Y); await page.mouse.down();
 await page.mouse.move(X(c1.start + 5.5) - 80, MAIN_Y, { steps: 8 }); await page.mouse.up(); await page.waitForTimeout(500);
 if (process.env.SHOT) await page.screenshot({ path: process.env.SHOT.replace('.png', '3.png') });
@@ -49,15 +49,19 @@ console.log('tl', JSON.stringify(tl), 'down at', X(c1.start + 3), MAIN_Y);
 p = await P();
 const n1 = p.clips.find(c => c.id === c1.id), dClip = n1.start - ref(p) - s0, dRec = recAt(p) - ref(p) - r0;
 console.log('clip moved', dClip.toFixed(3), 'rec moved', dRec.toFixed(3));
+ok('dragging the video keeps the bar grid', Math.abs(p.anchorTime - ref(p) - a0) < 1e-6);
 ok('dragging the video moves its synced recording too', Math.abs(dClip) > 0.3 && Math.abs(dRec - dClip) < 0.002);
 const c2 = p.clips.find(c => c.id !== c1.id);
 await remeasure();
 const X0 = X;
 // 3) 녹음본 끌기 → 영상은 그대로
+const anc0 = p.anchorTime - ref(p);
 const ra = recAt(p), gap0 = p.clips.find(c => c.id === c1.id).start - ref(p), relRec0 = recAt(p) - ref(p);
 await page.mouse.move(X(ra + 2), REC_Y); await page.mouse.down();
 await page.mouse.move(X(ra + 2) + 40, REC_Y, { steps: 6 }); await page.mouse.up(); await page.waitForTimeout(500);
 p = await P();
+console.log('bar grid moved (vs video)', (p.anchorTime - ref(p) - anc0).toFixed(3));
+ok('dragging the recording keeps the bar grid', Math.abs(p.anchorTime - ref(p) - anc0) < 1e-6);
 console.log('rec moved (vs video)', (recAt(p) - ref(p) - relRec0).toFixed(3));
 ok('dragging the recording moves only the recording', Math.abs(recAt(p) - ref(p) - relRec0) > 0.2 && Math.abs(p.clips.find(c => c.id === c1.id).start - ref(p) - gap0) < 1e-6);
 await remeasure();

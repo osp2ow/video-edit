@@ -133,6 +133,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const [vTrack, setVTrack] = useState<Track | null>(null);
   const [rTrack, setRTrack] = useState<Track | null>(null);
   const [sheet, setSheet] = useState<SheetData | null>(null);
+  (window as any).__pveSheet = () => sheet;   // 점검용 (찾은 마디)
   // 두 번째부터 넣은 악보들 (악보 조각의 sheet 이름으로 고름)
   const [extraSheets, setExtraSheets] = useState<SheetData[]>([]);
   const [extraRecs, setExtraRecs] = useState<XRec[]>([]);

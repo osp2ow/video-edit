@@ -216,7 +216,14 @@ export function detectPage(gray: Uint8Array, W: number, H: number): Staff[] {
       let ca = 0, cb = 0;
       for (let y = aTop; y <= aBot; y++) if (y >= 0 && dark(x, y)) ca++;
       for (let y = bTop; y <= bBot; y++) if (y < H && dark(x, y)) cb++;
-      if (ca / Math.max(1, aBot - aTop + 1) < 0.2 && cb / Math.max(1, bBot - bTop + 1) < 0.2) cols.push(x);
+      if (ca / Math.max(1, aBot - aTop + 1) < 0.2 && cb / Math.max(1, bBot - bTop + 1) < 0.2) { cols.push(x); continue; }
+      // 오선 바로 위·아래에 잉크가 있어도, 오선에서 이어진 길이가 짧으면 마디선
+      // (타브 악보는 마디선 위에 H·P 글자나 이음줄이 붙어 있을 때가 많음 — 음표 기둥은 오선 밖으로 1칸 넘게 쭉 이어짐)
+      const lim = s.sp * 0.45 + 2;
+      let up = 0, dn = 0;
+      for (let y = parts[0].top - 1; y >= 0 && dark(x, y) && up <= lim; y--) up++;
+      for (let y = parts[parts.length - 1].bot + 1; y < H && dark(x, y) && dn <= lim; y++) dn++;
+      if (up <= lim && dn <= lim) cols.push(x);
     }
     const xs: number[] = [];
     let cg: number[] = [];

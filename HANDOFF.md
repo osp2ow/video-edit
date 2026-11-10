@@ -27,6 +27,7 @@
 - 테스트: `test/*.mjs` (Playwright, 헤드리스 크롬). 테스트용 영상·악보·녹음 파일은 저장소에 없음
 
 ## 최근 완료
+- 11/10 "영상을 바꿔도 예전 영상이 나옴" 수정 (클라우드): ① 프로젝트를 열면 파일을 차례로 내려받는데, 받는 사이 사용자가 새 파일로 바꾸면 받기가 끝난 예전 파일이 그 위에 다시 들어갔음 → localPick(직접 넣은 자리: cloudUpload 역할 이름 + 바꾸기 함수의 예전 이름)에 있으면 받지도 넣지도 않음, 지워진 예전 파일 받기 실패 안내도 안 띄움. ② 다른 컴퓨터·창에서 같은 이름으로 파일을 바꾸면 이 창은 바뀐 줄 몰라 예전 영상이 남고 예전 파일 목록을 들고 있었음 → syncRemoteFiles: 파일 경로가 바뀐 자리만 받아 replaceX로 교체, filesRef 최신화. 내려받기는 pullFiles로 분리. 시험: `test/samecloud.mjs a b` (python3 -m http.server 8765, 가짜 Firebase에 __fakeDlDelay·__fakeUpDelay 추가)
 - 11/10 같은 이름 다른 내용 영상 바꾸기 점검(코드 수정 없음): 기준 영상(#f-video 같은 이름)·추가 영상 '바꾸기'·'영상 추가'로 같은 이름 다시 넣기 모두 미리보기(멈춤·재생)·PIP·PIP 끄기 후 영상 줄·추출 화면/소리까지 새 내용, 타임라인 조각·PIP 위치 유지. 클라우드는 내용 지문(크기+앞뒤 4MB SHA-256)으로 저장해 같은 이름이어도 새로 올라감 (`test/samename.mjs a폴더 b폴더` — clip.mp4 빨강/파랑, pip.mp4 초록/노랑을 ffmpeg로 만들어 씀)
 - 11/7 기타 타브 악보(그 여름에 피어나 solo, Juniper Guitar Tab PDF)에서 마디줄 두 개를 놓쳐 4·5마디, 6·7마디가 한 마디로 읽히던 문제: 마디줄 바로 위에 H 글자·이음줄이 닿아 있으면 '오선 밖 반 칸 안 잉크 20%' 규칙에 걸려 탈락했음 → sheet.detectPage: 그 규칙에 걸려도 오선에서 위·아래로 이어진 잉크 길이가 0.45칸+2px 이하면 마디선 (음표 기둥은 쭉 이어짐). 다른 드럼 악보 시험 자료는 결과 동일. 점검용 window.__pveSheet(), `test/solosheet.mjs 악보 [영상]` (SYS=폴더 주면 줄별 그림에 마디선 표시)
 - 11/6 추출 영상에서 PIP가 검은 상자로만 나오던 문제: PIP 영상을 파일에서 직접 못 풀면(아이폰 HEVC 등, 미리보기는 브라우저 재생기라 정상) ovDec가 없어 검게 그려졌음 → exporter.ovFrames가 미리보기용 PIP <video>를 그 시각으로 옮겨(seeked 기다림) 장면을 받음(느리지만 정확). 예비 방식(재생하며 받기)에서는 ovFollow로 PIP 영상도 같이 재생(예전엔 매 장면 위치만 옮겨 멈춰 보였음). 재현: PIP 영상을 webm으로 (`MP4BOX=… OUT=… node test/overlay.mjs main2.mp4 second.webm`)

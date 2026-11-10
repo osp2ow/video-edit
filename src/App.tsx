@@ -234,8 +234,11 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const isOrphan = (path: string, exceptId: string) =>
     !projectsRef.current.some(d => d.id !== exceptId && refsOf(d.files).some(r => r.path === path));
 
+  /** 프로젝트를 여는 중에 직접 넣거나 바꾼 파일 (그 자리는 클라우드에서 받은 예전 파일로 덮어쓰지 않음) */
+  const localPick = useRef(new Set<string>());
   /** 파일을 넣으면 클라우드에 올리고 프로젝트에 연결 (같은 파일이 이미 있으면 올리지 않음) */
   const cloudUpload = (role: string, file: File) => {
+    if (!fromCloud.current.has(file)) localPick.current.add(role);
     if (!cloud?.storage || !user || fromCloud.current.has(file)) return;
     if (!currentRef.current && !creating.current) { pending.current.set(role, file); return; }
     queue(async () => {
@@ -803,6 +806,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     || xrecRef.current.some(x => x.id === name) || extraRef.current.some(x => x.name === name) || anglesRef.current.some(a => a.id === name);
   const replaceSource = async (oldId: string, file: File) => {
     const nid = file.name, x = sourcesRef.current.find(v => v.id === oldId);
+    if (!fromCloud.current.has(file)) localPick.current.add('source:' + oldId);
     if (!x) return addSource(file);
     if (nid !== oldId && takenName(nid)) { setMsg({ kind: 'warn', text: `${nid}은 다른 칸에 이미 들어가 있어요.` }); return; }
     x.video.pause(); URL.revokeObjectURL(x.video.src); x.video.remove();
@@ -820,6 +824,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   };
   const replaceRec = async (oldId: string, file: File) => {
     const nid = file.name;
+    if (!fromCloud.current.has(file)) localPick.current.add('recx:' + oldId);
     if (!xrecRef.current.some(x => x.id === oldId)) return addRec(file);
     if (nid !== oldId && takenName(nid)) { setMsg({ kind: 'warn', text: `${nid}은 다른 칸에 이미 들어가 있어요.` }); return; }
     xrecRef.current = xrecRef.current.filter(x => x.id !== oldId);
@@ -836,6 +841,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   };
   const replaceSheet = async (oldName: string, file: File) => {
     const nn = file.name;
+    if (!fromCloud.current.has(file)) localPick.current.add('sheetx:' + oldName);
     if (!extraRef.current.some(x => x.name === oldName)) return addSheet(file);
     if (nn !== oldName && takenName(nn)) { setMsg({ kind: 'warn', text: `${nn}은 다른 칸에 이미 들어가 있어요.` }); return; }
     const keep = extraRef.current;
@@ -852,6 +858,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   };
   const replaceAngle = async (oldId: string, file: File) => {
     const nid = file.name, a = anglesRef.current.find(x => x.id === oldId);
+    if (!fromCloud.current.has(file)) localPick.current.add('angle:' + oldId);
     if (!a) return loadAngle(file);
     if (nid !== oldId && takenName(nid)) { setMsg({ kind: 'warn', text: `${nid}은 다른 칸에 이미 들어가 있어요.` }); return; }
     a.video.pause(); URL.revokeObjectURL(a.video.src); a.video.remove();
@@ -1019,12 +1026,35 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const adoptKey = useRef(false);      // 받아온 내용은 다시 저장하지 않음
   const stable = (v: any): string => v && typeof v === 'object' ? (Array.isArray(v) ? `[${v.map(stable).join(',')}]` : `{${Object.keys(v).sort().filter(k => v[k] !== undefined).map(k => JSON.stringify(k) + ':' + stable(v[k])).join(',')}}`) : JSON.stringify(v);
   const contentOf = (x: { title?: string; project?: any; layouts?: any; ratio?: any }) => stable({ title: x.title || '', project: { ...defaultProject(), ...(x.project || {}) }, layouts: x.layouts || null, ratio: x.ratio || null });
+  /**
+   * 다른 컴퓨터(또는 다른 창)에서 파일을 바꿨으면: 파일 목록을 최신으로 맞추고, 내용이 바뀐 파일만 받아서 교체
+   * (예전에는 이름이 같으면 바뀐 줄 몰라서 예전 영상이 그대로 남고, 이 창이 예전 파일 목록을 다시 저장해 되돌리기도 했음)
+   */
+  const syncRemoteFiles = (d: ProjectDoc) => {
+    const nf = d.files || {}, of = filesRef.current;
+    if (stable(nf) === stable(of) || transfer?.kind === 'up') return;
+    const jobs: [string, FileRef][] = [];
+    const chg = (a?: FileRef, b?: FileRef) => !!b && (!a || a.path !== b.path);
+    if (chg(of.video, nf.video) && videoName) jobs.push(['video', nf.video!]);
+    if (chg(of.rec, nf.rec) && recName) jobs.push(['rec', nf.rec!]);
+    if (chg(of.sheet, nf.sheet) && sheet) jobs.push(['sheet', nf.sheet!]);
+    for (const [n, r] of Object.entries(nf.angles || {})) if (chg(of.angles?.[n], r) && anglesRef.current.some(a => a.id === n)) jobs.push(['angle', r]);
+    for (const [n, r] of Object.entries(nf.sources || {})) if (chg(of.sources?.[n], r) && sourcesRef.current.some(x => x.id === n)) jobs.push(['source', r]);
+    for (const [n, r] of Object.entries(nf.sheets || {})) if (chg(of.sheets?.[n], r) && extraRef.current.some(x => x.name === n)) jobs.push(['sheetx', r]);
+    for (const [n, r] of Object.entries(nf.recs || {})) if (chg(of.recs?.[n], r) && xrecRef.current.some(x => x.id === n)) jobs.push(['recx', r]);
+    filesRef.current = nf;
+    if (!jobs.length) return;
+    localPick.current.clear();
+    setMsg({ kind: 'info', text: `${d.editedByName || '다른 선생님'}이(가) 다른 컴퓨터에서 바꾼 파일 ${jobs.length}개를 받아와요.` });
+    pullFiles(jobs, openToken.current, true);
+  };
   const adoptRemote = (d: ProjectDoc) => {
     const sameFiles = (d.videoName || '') === (videoName || wantRef.current?.videoName || '') && (d.recName || '') === (recName || wantRef.current?.recName || '') && (d.sheetName || '') === (sheet?.name || wantRef.current?.sheetName || '')
       && (d.sourceNames || []).every(n => sourcesRef.current.some(x => x.id === n)) && (d.sheetNames || []).every(n => extraRef.current.some(x => x.name === n))
       && (d.recNames || []).every(n => xrecRef.current.some(x => x.id === n));
     syncedAt.current = d.updatedAt; setRemoteEdit(null);
     if (!sameFiles) { openProject(d, false); return; }   // 영상·녹음본·악보가 바뀌었으면 파일까지 새로 불러옴
+    syncRemoteFiles(d);   // 이름은 같아도 내용이 바뀐 파일
     const proj = { ...defaultProject(), ...(d.project || {}) };
     adoptKey.current = true;
     setProjectState(proj); lockAuto(proj);
@@ -1037,7 +1067,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     const d = currentDoc;
     if (!d || !d.editSession || d.editSession === EDIT_SESSION || d.updatedAt <= syncedAt.current) return;
     const mine = savePayload();
-    if (contentOf(d) === contentOf(mine)) { syncedAt.current = d.updatedAt; return; }   // 내용이 같으면 그냥 맞춤
+    if (contentOf(d) === contentOf(mine)) { syncedAt.current = d.updatedAt; syncRemoteFiles(d); return; }   // 설정이 같으면 그냥 맞춤 (파일만 바뀌었으면 그 파일 받기)
     const dirty = JSON.stringify(mine) !== lastSaved.current;
     if (!dirty) adoptRemote(d);
     else setRemoteEdit({ by: d.editedByName || '다른 선생님', at: d.updatedAt });
@@ -1125,7 +1155,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const openProject = async (d: ProjectDoc, copy: boolean) => {
     if (!cloud) return;
     setProjectsOpen(false);
-    openToken.current++; pending.current.clear();
+    openToken.current++; pending.current.clear(); localPick.current.clear();
     clearMedia();
     const proj = { ...defaultProject(), ...(d.project || {}) };
     setProjectState(proj);
@@ -1166,28 +1196,43 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     const missing = n - jobs.length;
     setMsg({ kind: 'info', text: `"${d.title}" 프로젝트를 열었어요.${missing > 0 ? ` 클라우드에 없는 파일 ${missing}개는 직접 넣어주세요.` : ''}` });
     if (!cloud.storage) return;
+    await pullFiles(jobs, token, false);
+  };
+
+  /** 그 파일 자리의 이름 (직접 넣은 파일 표시 localPick과 같은 이름) */
+  const roleKey = (role: string, r: FileRef) => role === 'video' || role === 'rec' || role === 'sheet' ? role : `${role}:${r.name}`;
+  /**
+   * 클라우드 파일을 차례로 내려받아 넣기.
+   * - 받는 동안 사용자가 그 자리에 직접 파일을 넣거나 바꿨으면 받은 예전 파일로 덮어쓰지 않음
+   *   (예전에는 큰 영상을 받는 사이 새 파일로 바꾸면, 받기가 끝난 예전 파일이 다시 들어가 "바꿔도 그대로"였음)
+   * - replacing: 다른 컴퓨터에서 바꾼 파일을 받아 지금 있는 것과 바꿈 (타임라인 설정은 그대로)
+   */
+  const pullFiles = async (jobs: [string, FileRef][], token: number, replacing: boolean) => {
+    if (!cloud?.storage) return;
     for (const [role, r] of jobs) {
       if (openToken.current !== token) return;
+      if (localPick.current.has(roleKey(role, r))) continue;
       setTransfer({ kind: 'down', name: r.name, pct: 0 });
       try {
         // 인터넷이 잠깐 끊기는 경우가 있어서 두 번까지 다시 받아 봄
         let file: File | null = null, err: any = null;
         for (let k = 0; k < 3 && !file; k++) {
           try { file = await cloud.downloadFile(r, pct => setTransfer({ kind: 'down', name: r.name, pct })); }
-          catch (e) { err = e; if (openToken.current !== token) return; await new Promise(res => setTimeout(res, 1500 * (k + 1))); }
+          catch (e) { err = e; if (openToken.current !== token) return; if (localPick.current.has(roleKey(role, r))) break; await new Promise(res => setTimeout(res, 1500 * (k + 1))); }
         }
+        if (localPick.current.has(roleKey(role, r))) continue;   // 받는 사이에 직접 넣었으면 예전 파일은 필요 없음 (지워졌어도 괜찮음)
         if (!file) throw err;
         if (openToken.current !== token) return;
         fromCloud.current.add(file);
         if (role === 'video') loadVideo(file, true);
-        else if (role === 'angle') loadAngle(file);
+        else if (role === 'angle') { if (replacing && anglesRef.current.some(a => a.id === r.name)) await replaceAngle(r.name, file); else loadAngle(file); }
         else if (role === 'rec') loadRec(file);
-        else if (role === 'source') await addSource(file, true);
-        else if (role === 'sheetx') await addSheet(file, true);
-        else if (role === 'recx') await addRec(file, true);
+        else if (role === 'source') { if (replacing && sourcesRef.current.some(x => x.id === r.name)) await replaceSource(r.name, file); else await addSource(file, true); }
+        else if (role === 'sheetx') { if (replacing && extraRef.current.some(x => x.name === r.name)) await replaceSheet(r.name, file); else await addSheet(file, true); }
+        else if (role === 'recx') { if (replacing && xrecRef.current.some(x => x.id === r.name)) await replaceRec(r.name, file); else await addRec(file, true); }
         else await loadSheet(file);
       } catch (e: any) {
-        console.warn('[클라우드] 내려받기 실패', r.name, e);
+        console.warn('[클라우드] 내려받기 실패', r.name, r.path, e?.code || e);
         setMsg({ kind: 'warn', text: `${r.name}을(를) 클라우드에서 내려받지 못했어요 (${e?.code || e?.message || '알 수 없는 오류'}). 이 컴퓨터에 있는 같은 파일을 왼쪽 칸에 넣으면 이 프로젝트에 그대로 들어가요.` });
       }
     }

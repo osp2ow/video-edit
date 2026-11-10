@@ -31,12 +31,15 @@
         put(file) {
           const subs = [];
           setTimeout(async () => {
-            for (const r of [0.25, 0.5, 0.75, 1]) { await new Promise(t => setTimeout(t, 40)); subs.forEach(s => s.next && s.next({ bytesTransferred: file.size * r, totalBytes: file.size })); }
+            for (const r of [0.25, 0.5, 0.75, 1]) { await new Promise(t => setTimeout(t, 40 + (window.__fakeUpDelay || 0) / 4)); /* 큰 파일 올리기 흉내 */ subs.forEach(s => s.next && s.next({ bytesTransferred: file.size * r, totalBytes: file.size })); }
             blobs.set(path, file); subs.forEach(s => s.done && s.done());
           }, 10);
           return { on(ev, next, err, done) { subs.push({ next, err, done }); } };
         },
-        async getDownloadURL() { if (!blobs.has(path)) throw { code: 'storage/object-not-found' }; return URL.createObjectURL(blobs.get(path)); },
+        async getDownloadURL() {
+          if (window.__fakeDlDelay) await new Promise(t => setTimeout(t, window.__fakeDlDelay));   // 큰 파일 내려받기 흉내
+          if (!blobs.has(path)) throw { code: 'storage/object-not-found' }; return URL.createObjectURL(blobs.get(path));
+        },
         async delete() { if (!blobs.has(path)) throw { code: 'storage/object-not-found' }; blobs.delete(path); },
       };
     },

@@ -500,3 +500,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .chord-lib-item:hover .chord-lib-del, .chord-lib-del:focus-visible { opacity: 1; }
 .sec-lib { display: grid; gap: 6px; }
 .tl-tr select { background: var(--bg); color: inherit; border: 1px solid var(--line); border-radius: 6px; padding: 2px 4px; font: 500 12px var(--font); }
+
+/* 썸네일에 얹는 이미지 목록 */
+.thumb-imgs { list-style: none; margin: 6px 0 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.thumb-imgs li { border: 1px solid var(--line, #333); border-radius: 8px; padding: 6px 8px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
+.thumb-imgs li.on { border-color: var(--accent, #ff8a1f); }
+.thumb-imgs img { width: 34px; height: 34px; object-fit: contain; background: repeating-conic-gradient(#555 0 25%, #444 0 50%) 0 0 / 10px 10px; border-radius: 4px; flex: none; }
+.thumb-imgs .ell { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.thumb-imgs input[type=range] { width: 100%; }

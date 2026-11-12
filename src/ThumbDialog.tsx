@@ -1,4 +1,4 @@
-// 썸네일 만들기: 기준 영상 한 장면 + 제목 글자 → PNG
+// 썸네일 만들기: 기준 영상 한 장면 + 추가 이미지(로고·사진) + 제목 글자 → PNG
 import { Project, Ratio, getFx, fmtTime, RATIO_ASCII, RATIOS, RATIO_LABEL, NEUTRAL_FILTER } from './model';
 import { filterCss } from './effects';
 import { retouchFaces } from './face';
@@ -50,8 +50,15 @@ const DKEY = 'pve.thumbDefaults';
 function loadDefaults(): Defaults {
   try { return { ...FACTORY, ...(JSON.parse(localStorage.getItem(DKEY) || '{}')) }; } catch { return { ...FACTORY }; }
 }
-const last = { title: '', ...loadDefaults() };
+/** 썸네일에 얹는 이미지: 가운데 위치(x·y = 화면 비율 0~1) · 폭 w(짧은 변 대비) · 투명도 a · bg = 영상 대신 화면 가득 */
+interface ThumbImg { id: string; name: string; el: HTMLImageElement; x: number; y: number; w: number; a: number; bg: boolean }
+const last = { title: '', imgs: [] as ThumbImg[], ...loadDefaults() };
 const WEIGHTS: [number, string][] = [[400, '보통'], [700, '굵게'], [900, '아주 굵게']];
+/** 얹은 이미지의 자리 (픽셀) */
+function imgBox(m: ThumbImg, W: number, H: number) {
+  const w = Math.min(W, H) * m.w, h = w * (m.el.naturalHeight / Math.max(1, m.el.naturalWidth));
+  return { x: m.x * W - w / 2, y: m.y * H - h / 2, w, h };
+}
 
 export function ThumbDialog(p: Props) {
   // 여러 비율을 골라 한 번에 저장 (릴스 / 피드 / 유튜브)
@@ -78,6 +85,22 @@ export function ThumbDialog(p: Props) {
   const [tw, setTw] = useState(last.tw);
   const [sw, setSw] = useState(last.sw);
   const [fontsOpen, setFontsOpen] = useState(false);
+  const [imgs, setImgs] = useState<ThumbImg[]>(last.imgs);
+  const [selImg, setSelImg] = useState<string | null>(null);
+  const setImg = (id: string, patch: Partial<ThumbImg>) => setImgs(xs => xs.map(x => x.id === id ? { ...x, ...patch } : x));
+  const addImages = (files: FileList | null) => {
+    for (const f of Array.from(files || [])) {
+      if (!/^image\//.test(f.type) && !/\.(png|jpe?g|webp|gif|svg)$/i.test(f.name)) continue;
+      const el = new Image();
+      el.onload = () => {
+        const id = 'i' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5);
+        setImgs(xs => [...xs, { id, name: f.name, el, x: 0.5, y: 0.42 + (xs.length % 3) * 0.08, w: 0.35, a: 1, bg: false }]);
+        setSelImg(id);
+      };
+      el.onerror = () => setMsg(`${f.name}을(를) 그림으로 읽지 못했어요.`);
+      el.src = URL.createObjectURL(f);
+    }
+  };
   const [msg, setMsg] = useState('');
   const cvs = useRef<Partial<Record<Ratio, HTMLCanvasElement | null>>>({});
   const vid = useRef<HTMLVideoElement | null>(null);
@@ -88,9 +111,9 @@ export function ThumbDialog(p: Props) {
     window.addEventListener('keydown', k, true);
     return () => window.removeEventListener('keydown', k, true);
   }, []);
-  const st = useRef({ sel, views, title, sub, font, color, size, pos, shade, tw, sw, guide });
-  st.current = { sel, views, title, sub, font, color, size, pos, shade, tw, sw, guide };
-  Object.assign(last, { title, sub, font, color, size, pos, shade, tw, sw, ratios: sel });
+  const st = useRef({ sel, views, title, sub, font, color, size, pos, shade, tw, sw, guide, imgs, selImg });
+  st.current = { sel, views, title, sub, font, color, size, pos, shade, tw, sw, guide, imgs, selImg };
+  Object.assign(last, { title, sub, font, color, size, pos, shade, tw, sw, ratios: sel, imgs });
   const touched = useRef(false);
   const apply = (d: Defaults) => { setSub(d.sub); setFont(d.font); setColor(d.color); setSize(d.size); setPos(d.pos); setShade(d.shade); setTw(d.tw); setSw(d.sw); if (d.ratios?.length) setRatios(d.ratios); else if (d.ratio) setRatios([d.ratio]); };
   // 다른 PC에서 저장한 기본값이 있으면 불러오기 (아직 아무것도 안 바꿨을 때만)
@@ -141,7 +164,12 @@ export function ThumbDialog(p: Props) {
     const ctx = c.getContext('2d')!;
     ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
     const fx = getFx(p.project);
-    if (v && v.videoWidth) {
+    const bgImg = [...s.imgs].reverse().find(m => m.bg);
+    if (bgImg) {   // 배경 이미지: 영상 장면 대신 화면 가득 (확대·위치 옮기기 그대로)
+      const el = bgImg.el, k = Math.max(W / el.naturalWidth, H / el.naturalHeight) * s.zoom;
+      const dw = el.naturalWidth * k, dh = el.naturalHeight * k;
+      ctx.globalAlpha = bgImg.a; ctx.drawImage(el, (W - dw) / 2 + s.pan.x * Math.max(0, dw - W) / 2, (H - dh) / 2 + s.pan.y * Math.max(0, dh - H) / 2, dw, dh); ctx.globalAlpha = 1;
+    } else if (v && v.videoWidth) {
       const k = Math.max(W / v.videoWidth, H / v.videoHeight) * s.zoom;
       const dw = v.videoWidth * k, dh = v.videoHeight * k;
       const x = (W - dw) / 2 + s.pan.x * Math.max(0, dw - W) / 2, y = (H - dh) / 2 + s.pan.y * Math.max(0, dh - H) / 2;
@@ -154,6 +182,17 @@ export function ThumbDialog(p: Props) {
       else { ctx.fillStyle = 'rgba(0,0,0,0.32)'; ctx.fillRect(0, 0, W, H); }
     }
     const base = Math.min(W, H), S = thumbSafe(ratio, W, H), maxW = S.r - S.l, cx = (S.l + S.r) / 2;
+    // 얹은 이미지 (로고·사진): 글자 아래, 어둡게 한 막 위
+    for (const m of s.imgs) {
+      if (m.bg) continue;
+      const b = imgBox(m, W, H);
+      ctx.globalAlpha = m.a; ctx.drawImage(m.el, b.x, b.y, b.w, b.h); ctx.globalAlpha = 1;
+      if (s.selImg === m.id && !savingRef.current) {   // 고른 이미지 테두리 + 크기 손잡이 (저장 그림엔 안 들어감)
+        ctx.save(); ctx.setLineDash([base * 0.012, base * 0.008]); ctx.strokeStyle = '#ff8a1f'; ctx.lineWidth = Math.max(2, base * 0.004);
+        ctx.strokeRect(b.x, b.y, b.w, b.h); ctx.setLineDash([]); ctx.fillStyle = '#ff8a1f';
+        const hs = base * 0.03; ctx.fillRect(b.x + b.w - hs / 2, b.y + b.h - hs / 2, hs, hs); ctx.restore();
+      }
+    }
     // 보이는 곳 폭에 맞춰 줄바꿈 → 그래도 넘치면(긴 단어 · 높이 초과) 글자를 줄임
     const wrap = (text: string, font: string) => {
       ctx.font = font; const out: string[] = [];
@@ -211,8 +250,31 @@ export function ThumbDialog(p: Props) {
 
   // 미리보기를 끌어서 화면 위치 옮기기
   const drag = useRef<{ r: Ratio; x: number; y: number; pan: { x: number; y: number } } | null>(null);
-  const onDown = (r: Ratio) => (e: React.PointerEvent<HTMLCanvasElement>) => { e.currentTarget.setPointerCapture(e.pointerId); setFocus(r); drag.current = { r, x: e.clientX, y: e.clientY, pan: views[r].pan }; };
+  // 얹은 이미지 끌기: 가운데를 잡으면 옮기기, 오른쪽 아래 모서리를 잡으면 크기
+  const imgDrag = useRef<{ id: string; mode: 'move' | 'size'; x: number; y: number; m0: ThumbImg; r: Ratio } | null>(null);
+  const onDown = (r: Ratio) => (e: React.PointerEvent<HTMLCanvasElement>) => {
+    e.currentTarget.setPointerCapture(e.pointerId); setFocus(r);
+    const rc = e.currentTarget.getBoundingClientRect(), [W, H] = SIZE[r];
+    const px = (e.clientX - rc.left) / rc.width * W, py = (e.clientY - rc.top) / rc.height * H, hs = Math.min(W, H) * 0.045;
+    for (const m of [...imgs].reverse()) {
+      if (m.bg) continue;
+      const b = imgBox(m, W, H);
+      const corner = Math.abs(px - (b.x + b.w)) < hs && Math.abs(py - (b.y + b.h)) < hs;
+      if (corner || (px >= b.x && px <= b.x + b.w && py >= b.y && py <= b.y + b.h)) {
+        setSelImg(m.id); imgDrag.current = { id: m.id, mode: corner ? 'size' : 'move', x: e.clientX, y: e.clientY, m0: m, r }; return;
+      }
+    }
+    setSelImg(null);
+    drag.current = { r, x: e.clientX, y: e.clientY, pan: views[r].pan };
+  };
   const onMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const g = imgDrag.current;
+    if (g) {
+      const rc = e.currentTarget.getBoundingClientRect(), [W, H] = SIZE[g.r], dx = (e.clientX - g.x) / rc.width, dy = (e.clientY - g.y) / rc.height;
+      if (g.mode === 'move') setImg(g.id, { x: Math.max(0, Math.min(1, g.m0.x + dx)), y: Math.max(0, Math.min(1, g.m0.y + dy)) });
+      else { const b = imgBox(g.m0, W, H), nw = Math.max(Math.min(W, H) * 0.04, b.w + dx * W * 2); setImg(g.id, { w: Math.min(2, nw / Math.min(W, H)) }); }   // 가운데 기준으로 커짐
+      return;
+    }
     const d = drag.current; if (!d) return;
     const rc = e.currentTarget.getBoundingClientRect();
     const k = 2.2 / Math.max(0.2, views[d.r].zoom - 0.95);
@@ -250,7 +312,7 @@ export function ThumbDialog(p: Props) {
           <div className="thumb-view">
             {sel.map(r => (
               <figure key={r} className={`thumb-item ${focus === r && sel.length > 1 ? 'focus' : ''}`}>
-                <canvas ref={el => { cvs.current[r] = el; }} onPointerDown={onDown(r)} onPointerMove={onMove} onPointerUp={() => { drag.current = null; }} aria-label={`${RATIO_LABEL[r]} 썸네일 미리보기 (끌어서 위치 옮기기)`} />
+                <canvas ref={el => { cvs.current[r] = el; }} onPointerDown={onDown(r)} onPointerMove={onMove} onPointerUp={() => { drag.current = null; imgDrag.current = null; }} aria-label={`${RATIO_LABEL[r]} 썸네일 미리보기 (끌어서 위치 옮기기)`} />
                 {sel.length > 1 && <figcaption>{r} {RATIO_LABEL[r]}</figcaption>}
               </figure>
             ))}
@@ -273,6 +335,29 @@ export function ThumbDialog(p: Props) {
             <div className="field">
               <label htmlFor="th-z">확대{sel.length > 1 ? ` · ${RATIO_LABEL[focus]}` : ''} <span className="mono dim">{Math.round(zoom * 100)}%</span></label>
               <input id="th-z" type="range" min={1} max={3} step={0.01} value={zoom} onChange={e => setView(focus, { zoom: parseFloat(e.target.value) })} />
+            </div>
+            <div className="field">
+              <label><span style={{ whiteSpace: 'nowrap' }}>이미지</span> <span className="dim small">로고·사진 · 끌어서 옮기기 · 모서리로 크기</span></label>
+              <label className="btn sm" htmlFor="th-img">+ 이미지 추가</label>
+              <input id="th-img" type="file" accept="image/*" multiple hidden onChange={e => { addImages(e.target.files); e.target.value = ''; }} />
+              {imgs.length > 0 && (
+                <ul className="thumb-imgs">
+                  {imgs.map(m => (
+                    <li key={m.id} className={selImg === m.id ? 'on' : ''} onClick={() => setSelImg(m.id)}>
+                      <div className="row tight">
+                        <img src={m.el.src} alt="" />
+                        <span className="small ell" title={m.name}>{m.name}</span>
+                        <button type="button" className="link small danger" onClick={e => { e.stopPropagation(); setImgs(xs => xs.filter(x => x.id !== m.id)); if (selImg === m.id) setSelImg(null); }}>빼기</button>
+                      </div>
+                      {selImg === m.id && <>
+                        {!m.bg && <label className="small">크기 <input type="range" min={0.04} max={1.2} step={0.005} value={m.w} onChange={e => setImg(m.id, { w: parseFloat(e.target.value) })} /></label>}
+                        <label className="small">투명도 <input type="range" min={0.1} max={1} step={0.01} value={m.a} onChange={e => setImg(m.id, { a: parseFloat(e.target.value) })} /></label>
+                        <label className="switch small"><input type="checkbox" checked={m.bg} onChange={e => setImg(m.id, { bg: e.target.checked })} /><span>배경으로 (영상 장면 대신 화면 가득)</span></label>
+                      </>}
+                    </li>
+                  ))}
+                </ul>
+              )}
             </div>
             <div className="field">
               <label htmlFor="th-title-in">제목 <span className="dim small">Shift+Enter 줄바꿈</span></label>

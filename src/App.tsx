@@ -1,4 +1,4 @@
-import { shiftProject, recKey, recKeyOf, MAIN_REC, RecClip, trimOf, bpmAt, mainShift, recAtOf, sheetClipsOf, sheetClipEnd, sheetHome, SheetClip, clipEnd, barAt, Project, Ratio, CardLayout, Cut, CutSnap, MAIN, defaultProject, defaultLayouts, barBeat, barStart, barLen, beatLen, fmtTime, angleAt, setCutAt, snapTime, normalizeCuts, sheetStart, sheetEnd, sheetIndex, barOfSheet, VideoXf, getXf, withXf, defaultXf, Caption, CaptionStyle, Fx, getFx, LAYOUT_LABEL, clipsOf, timelineEnd, Clip, RATIOS, RATIO_LABEL, MarkKind, Punch, MARK_AMT, cardSpan, FIRST_PAGE, chordPosOf, ChordPos } from './model';
+import { shiftProject, recKey, recKeyOf, MAIN_REC, RecClip, trimOf, bpmAt, mainShift, recAtOf, sheetClipsOf, sheetClipEnd, sheetHome, SheetClip, clipEnd, barAt, Project, Ratio, CardLayout, Cut, CutSnap, MAIN, defaultProject, defaultLayouts, barBeat, barStart, barLen, beatLen, fmtTime, angleAt, setCutAt, snapTime, normalizeCuts, sheetStart, sheetEnd, sheetIndex, barOfSheet, VideoXf, getXf, withXf, defaultXf, Caption, CaptionStyle, Fx, getFx, LAYOUT_LABEL, clipsOf, timelineEnd, Clip, RATIOS, RATIO_LABEL, MarkKind, Punch, MARK_AMT, cardSpan, FIRST_PAGE, chordPosOf, ChordPos, meterText, unitBpm, isCompound, feltBpb } from './model';
 import { captionStyleOf, styleFor, CAP_SHARED, ownLook, ownPos } from './render';
 import { CaptionStudio } from './CaptionStudio';
 import { ChordPanel } from './ChordPanel';
@@ -6,7 +6,7 @@ import { ChordData, blankChord, editableOf } from './chords';
 import { Angle, ANGLE_COLORS, makeAngleVideo, followMaster, activeSource } from './angles';
 import { fixEditList } from './movfix';
 import { decodeVideoAudio } from './audiofile';
-import { estimateTempoRange } from './analysis';
+import { estimateTempoRange, pickEighthBpm } from './analysis';
 import { Track, decodeMono, analyzeTrack, estimateTempo, syncOffset, firstStrongBeat, downbeatShift, refinePhase, kickGrid } from './analysis';
 import { SheetData, fileToPages, detectSheet, leadingRests, stitchImages } from './sheet';
 import { Player } from './player';
@@ -609,9 +609,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     if (!tr) { setMsg({ kind: 'info', text: '녹음본이나 영상 소리가 있어야 템포를 찾을 수 있어요.' }); return; }
     const shift = rTrack ? recAtOf(p, masterDur()) : mainShift(p, masterDur());   // 타임라인 = 소리 시간 + shift
     const nextStart = Math.min(...list.filter(x => x.start > c.start + 0.05).map(x => x.start), shift + tr.duration);
-    const r = estimateTempoRange(tr, c.start - shift, nextStart - shift, { bpb: p.beatsPerBar, sheetBars: c.barOut - c.barIn });
+    const r = estimateTempoRange(tr, c.start - shift, nextStart - shift, { bpb: feltBpb(p), sheetBars: c.barOut - c.barIn });
     if (!r) { setMsg({ kind: 'warn', text: '이 악보 구간의 소리가 너무 짧아서 템포를 찾지 못했어요. 직접 넣어 주세요.' }); return; }
-    const bpm = Math.round(r.suggested * 10) / 10;
+    const bpm = meterBpm(Math.round(r.suggested * 10) / 10, p, tr);
     setSheetBpm(clipId, bpm);
     setMsg({ kind: 'ok', text: `${rTrack ? '녹음본' : '영상 소리'}에서 이 악보 구간을 들어보니 ${bpm} BPM 같아요. 다르면 숫자를 고쳐 주세요.` });
   };
@@ -1305,6 +1305,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     return r;
   };
 
+  /** 감지한 템포를 이 박자의 BPM으로 (x/8은 타격음에 가장 잘 맞는 8분음표 격자) */
+  const meterBpm = (d: number, p: Pick<Project, 'beatsPerBar' | 'beatUnit'>, tr: Track | null = rTrack || vTrack) =>
+    p.beatUnit !== 8 ? d : tr ? pickEighthBpm(tr.onsets, d) : unitBpm(d, p);
   // 싱크 + 템포 — 파일이 들어올 때마다 아직 손대지 않은 값만 채운다
   const [autoTick, setAutoTick] = useState(0);
   const [autoReason, setAutoReason] = useState('');
@@ -1315,11 +1318,11 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     let offset = mainShift(p, masterDur()) - recAtOf(p, masterDur());
     if (vTrack && rTrack && !p.syncTouched && !locked) { const r = runSync(); if (r) offset = r.offset; }
     const src = rTrack || vTrack!;
-    const tempo = estimateTempo(src.env, { onsets: src.onsets, low: src.low, mid: src.mid, sheetBars: sheet?.bars.length, bpb: p.beatsPerBar });
+    const tempo = estimateTempo(src.env, { onsets: src.onsets, low: src.low, mid: src.mid, sheetBars: sheet?.bars.length, bpb: feltBpb(p) });
     setTempoInfo({ bpm: tempo.bpm, suggested: tempo.suggested });
-    if (!p.bpmTouched && !locked) setProjectAuto({ bpm: tempo.suggested });
+    if (!p.bpmTouched && !locked) setProjectAuto({ bpm: meterBpm(tempo.suggested, p, src) });
     if (locked) { setAutoTick(n => n + 1); return; }
-    const parts: string[] = [`BPM ${p.bpmTouched ? p.bpm : tempo.suggested}`];
+    const parts: string[] = [`BPM ${p.bpmTouched ? p.bpm : meterBpm(tempo.suggested, p, src)}`];
     if (vTrack && rTrack) parts.push(`싱크 ${offset >= 0 ? '+' : ''}${offset.toFixed(3)}초`);
     setMsg({ kind: 'ok', text: `자동 감지: ${parts.join(' · ')}` });
     setAutoTick(n => n + 1);
@@ -1344,10 +1347,12 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     const shift = rTrack ? recAtOf(p, masterDur()) : mainShift(p, masterDur());   // 녹음본(또는 첫 영상) 시간 → 타임라인 시간
     const f0 = firstStrongBeat(src.onsets, 60 / p.bpm);
     if (f0 === null) return;
-    const beat = 60 / p.bpm, bar = beat * p.beatsPerBar;
+    // 6/8·9/8·12/8(3/8)은 ♪ 3개 묶음(♩.)을 한 박으로 보고 판단 (킥 1박·스네어 2박 격자도 그 단위로)
+    const fk = p.beatUnit === 8 && p.beatsPerBar % 3 === 0 ? 3 : 1, nb = p.beatsPerBar / fk;
+    const beat = 60 / p.bpm * fk, bar = beat * nb;
     // 드럼 킥(1·3박)·스네어(2·4박) 격자로 첫 박 확인: 첫 센 소리가 2박 스네어거나 박 사이(뒷박)면 그 앞 킥 박이 마디 첫 박
     // (첫 박 킥이 작게 녹음되면 2박 스네어부터 잡혀서 늘 한 박 늦게 잡히던 문제)
-    const g = p.beatsPerBar % 2 === 0 ? kickGrid(src, p.bpm) : { phase: 0, conf: -1 };
+    const g = nb % 2 === 0 ? kickGrid(src, p.bpm / fk) : { phase: 0, conf: -1 };
     let fs = f0, back = 0;
     if (g.conf > 0.3) {
       let a = g.phase + Math.floor((f0 + 0.1 * beat - g.phase) / (2 * beat)) * 2 * beat;
@@ -1363,7 +1368,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
       if (R > 0) { anchor = f - R * bar; reason = `${lead}악보 1~${R}마디가 쉼표라서 첫 소리를 ${R + 1}마디로 맞췄어요`; }
       else reason = `${lead}첫 소리를 1마디 1박으로 맞췄어요`;
     } else {
-      let j = downbeatShift(src, fs, p.bpm, p.beatsPerBar);
+      let j = downbeatShift(src, fs, p.bpm / fk, nb);
       if (g.conf > 0.3 && j % 2 === 1) j = 0;   // 킥·스네어 격자와 어긋나는 쪽으로는 옮기지 않음
       anchor = f + j * beat;
       reason = j > 0 ? `${lead}소리로 판단: 첫 소리 ${j}박 뒤가 1박` : `${lead}첫 소리를 1마디 1박으로 맞췄어요`;
@@ -1373,7 +1378,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     setProjectAuto({ anchorTime: anchor, anchorBar: 1, anchorTouched: false });
     setAutoReason(reason);
     // eslint-disable-next-line
-  }, [autoTick, sheet, project.bpm, project.beatsPerBar]);
+  }, [autoTick, sheet, project.bpm, project.beatsPerBar, project.beatUnit]);
 
   // ---------- 추출 ----------
   const getExportInput = async (r: Ratio = ratio) => {
@@ -2001,16 +2006,27 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
                 onBlur={() => setBpmText(null)}
                 onKeyDown={e => { if (e.key === 'Enter' || e.key === 'Escape') (e.target as HTMLInputElement).blur(); }} />
               <button type="button" className="btn sm" onClick={tap} title="박자에 맞춰 여러 번 누르세요 (T)">탭</button>
-              <select id="bpb" aria-label="박자" value={project.beatsPerBar} onChange={e => setProject({ beatsPerBar: parseInt(e.target.value, 10) })}>
-                {[2, 3, 4, 5, 6, 7].map(n => <option key={n} value={n}>{n}/4</option>)}
+              <select id="bpb" aria-label="박자" value={meterText(project)} onChange={e => {
+                const [n, u] = e.target.value.split('/').map(Number), unit = (u === 8 ? 8 : 4) as 4 | 8;
+                const patch: Partial<Project> = { beatsPerBar: n, beatUnit: unit };
+                // 손대지 않은 템포는 새 박자 기준으로 다시 (x/8은 ♪ 기준 BPM)
+                if (!project.bpmTouched && tempoInfo && unit !== (project.beatUnit || 4)) patch.bpm = meterBpm(tempoInfo.suggested, { beatsPerBar: n, beatUnit: unit });
+                setProject(patch);
+              }}>
+                {['2/4', '3/4', '4/4', '5/4', '6/4', '7/4', '3/8', '5/8', '6/8', '7/8', '9/8', '12/8'].map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
-            {tempoInfo && tempoInfo.suggested !== project.bpm && <p className="note">감지 {tempoInfo.bpm.toFixed(2)} → <button type="button" className="link" onClick={() => setProject({ bpm: tempoInfo.suggested, bpmTouched: false })}>{tempoInfo.suggested} 적용</button></p>}
+            {project.beatUnit === 8 && <p className="note">x/8 박자는 BPM이 8분음표(♪) 기준이에요{isCompound(project) ? ` · ♩. = ${Math.round(project.bpm / 3 * 10) / 10}` : ''}</p>}
+            {tempoInfo && meterBpm(tempoInfo.suggested, project) !== project.bpm && <p className="note">감지 {meterBpm(tempoInfo.suggested, project)} → <button type="button" className="link" onClick={() => setProject({ bpm: meterBpm(tempoInfo.suggested, project), bpmTouched: false })}>적용</button></p>}
             <div className="row tight">
               <span className="small dim">2배·절반으로 잡혔으면</span>
               <button type="button" className="btn ghost xs" onClick={() => setProject({ bpm: Math.round(project.bpm / 2 * 100) / 100, bpmTouched: true })} title="템포 절반으로">½</button>
               <button type="button" className="btn ghost xs" onClick={() => setProject({ bpm: Math.round(project.bpm * 2 * 100) / 100, bpmTouched: true })} title="템포 2배로">×2</button>
               <button type="button" className="btn ghost xs" onClick={() => setProject({ bpm: Math.round(project.bpm * 3 / 4 * 100) / 100, bpmTouched: true })} title="템포 3/4로 (셋잇단을 16분으로 잘못 잡았을 때)">¾</button>
+              {project.beatUnit === 8 && <>
+                <button type="button" className="btn ghost xs" onClick={() => setProject({ bpm: Math.round(project.bpm / 3 * 100) / 100, bpmTouched: true })} title="템포 ⅓로">⅓</button>
+                <button type="button" className="btn ghost xs" onClick={() => setProject({ bpm: Math.round(project.bpm * 3 * 100) / 100, bpmTouched: true })} title="템포 3배로 (♩.로 잡힌 템포를 ♪ 기준으로)">×3</button>
+              </>}
             </div>
           </div>
           <label className="switch">

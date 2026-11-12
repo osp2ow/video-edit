@@ -132,18 +132,20 @@ export class Player {
         if (t > end) break;
         const ct = this.c0 + (t - this.T0);
         if (ct < ctx.currentTime) continue;
-        this.click(ct, ((k % bpb) + bpb) % bpb === 0);
+        const i = ((k % bpb) + bpb) % bpb;
+        this.click(ct, i === 0 ? 2 : p.beatUnit === 8 && bpb % 3 === 0 && bpb >= 6 && i % 3 === 0 ? 1 : 0);   // 마디 첫 박 · 6/8 등은 ♩. 묶음 첫 박도 살짝
       }
     }
     this.scheduledTo = Math.max(this.scheduledTo, end);
   }
 
-  private click(at: number, accent: boolean) {
+  private click(at: number, level: 0 | 1 | 2) {
+    const accent = level === 2;
     const ctx = this.ctx!;
     const o = ctx.createOscillator(), g = ctx.createGain();
-    o.frequency.value = accent ? 1760 : 1175;
+    o.frequency.value = accent ? 1760 : level === 1 ? 1400 : 1175;
     g.gain.setValueAtTime(0.0001, at);
-    g.gain.exponentialRampToValueAtTime(accent ? 0.9 : 0.55, at + 0.002);
+    g.gain.exponentialRampToValueAtTime(accent ? 0.9 : level === 1 ? 0.7 : 0.45, at + 0.002);
     g.gain.exponentialRampToValueAtTime(0.0001, at + 0.045);
     o.connect(g); g.connect(this.clickGain!);
     o.start(at); o.stop(at + 0.06);

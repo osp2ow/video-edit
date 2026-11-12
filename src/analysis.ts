@@ -488,3 +488,25 @@ export function kickGrid(tr: Track, bpm: number): { phase: number; conf: number 
   const ok = Math.min(s4[1], s4[3]) > Math.max(s4[0], s4[2]) * 1.15;
   return ok ? best : { phase: best.phase, conf: -1 };
 }
+
+/**
+ * x/8 박자의 BPM(8분음표 기준) 고르기: 감지한 템포 d가 ♩인지 ♩.인지 곡마다 달라서
+ * d의 1·1.5·2·3·4배 중 타격음이 가장 잘 맞는 8분음표 격자를 고름 (비슷하면 느린 쪽)
+ */
+export function pickEighthBpm(onsets: { t: number; s: number }[], d: number): number {
+  const st = onsets.filter(o => o.s > 0.15);
+  if (st.length < 8) return Math.round(d * 2 * 10) / 10;
+  let best = d * 2, bestR = -1;
+  for (const c of [d, 1.5 * d, 2 * d, 3 * d, 4 * d].filter(c => c >= 80 && c <= 340)) {
+    const P = 60 / c, tol = Math.min(0.035, P * 0.12);
+    let r = 0;
+    for (let k = 0; k < 24; k++) {
+      const ph = k * P / 24;
+      let hit = 0;
+      for (const o of st) { const x = ((o.t - ph) % P + P) % P; if (Math.min(x, P - x) < tol) hit++; }
+      r = Math.max(r, hit / st.length);
+    }
+    if (r > bestR + 0.08) { bestR = r; best = c; }
+  }
+  return Math.round(best * 10) / 10;
+}

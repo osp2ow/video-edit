@@ -260,7 +260,9 @@ export function drawCard(ctx: CanvasRenderingContext2D, W: number, H: number, t:
   if (idx < 0) { sysIdx = 0; activeBeat = beat; }
   else if (idx >= N) { sysIdx = sheet.systems.length - 1; }
   else { sysIdx = sheet.bars[idx].sys; hl = idx; activeBeat = beat; }
-  const bv = sp.clip?.bpm ?? bpmAt(p, t);
+  // x/8 박자: 6/8·9/8·12/8은 ♩. = (♪ BPM ÷ 3), 그 밖(5/8·7/8·3/8)은 ♪ = BPM
+  const comp = p.beatUnit === 8 && p.beatsPerBar % 3 === 0 && p.beatsPerBar >= 6, eighth = p.beatUnit === 8 && !comp;
+  const bv = (sp.clip?.bpm ?? bpmAt(p, t)) / (comp ? 3 : 1);
   const bpm = Math.abs(bv - Math.round(bv)) < 0.05 ? String(Math.round(bv)) : bv.toFixed(1);
   const label = `= ${bpm}`;
 
@@ -326,12 +328,20 @@ export function drawCard(ctx: CanvasRenderingContext2D, W: number, H: number, t:
     ctx.beginPath(); ctx.ellipse(0, 0, tf * 0.27, tf * 0.19, 0, 0, Math.PI * 2); ctx.fill();
     ctx.restore();
     ctx.fillRect(hx + tf * 0.22, hy - tf * 0.92, tf * 0.06, tf * 0.9);
+    if (comp) { ctx.beginPath(); ctx.arc(hx + tf * 0.46, hy + tf * 0.02, tf * 0.075, 0, Math.PI * 2); ctx.fill(); }   // 점4분음표의 점
+    if (eighth) {   // 8분음표 꼬리
+      ctx.beginPath(); ctx.moveTo(hx + tf * 0.28, hy - tf * 0.92);
+      ctx.quadraticCurveTo(hx + tf * 0.62, hy - tf * 0.55, hx + tf * 0.5, hy - tf * 0.2);
+      ctx.lineWidth = tf * 0.07; ctx.strokeStyle = ctx.fillStyle as string; ctx.stroke();
+    }
   }
   ctx.fillText(label, lx + g.pad * 0.5 + tf * 0.95, footY);
   ctx.fillStyle = '#1e1b17';
-  const r = g.w * 0.0105, stepX = r * 3.3;
-  for (let k = 0; k < p.beatsPerBar; k++) {
-    const cx = g.x + g.w - g.pad * 1.5 - (p.beatsPerBar - 1 - k) * stepX;
+  // 박 점: 6/8 등은 ♪ 3개씩 묶음 사이를 살짝 띄움
+  const nb = p.beatsPerBar, r = g.w * (nb > 7 ? 0.008 : 0.0105), stepX = r * 3.3, gap = comp ? r * 1.6 : 0;
+  const gi = (k: number) => comp ? Math.floor(k / 3) : 0;
+  for (let k = 0; k < nb; k++) {
+    const cx = g.x + g.w - g.pad * 1.5 - (nb - 1 - k) * stepX - (gi(nb - 1) - gi(k)) * gap;
     ctx.fillStyle = k === activeBeat ? HL_LINE : 'rgba(30,27,23,0.18)';
     ctx.beginPath(); ctx.arc(cx, footY, r, 0, Math.PI * 2); ctx.fill();
   }

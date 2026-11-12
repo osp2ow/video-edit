@@ -321,6 +321,7 @@ export interface PipPos { x: number; y: number; w: number }
 export interface Project {
   bpm: number;
   beatsPerBar: number;
+  beatUnit?: 4 | 8;   // 박자표 아래 숫자: 4 = 4분음표 기준(기본), 8 = 8분음표 기준(6/8 등 · BPM도 ♪ 기준)
   anchorTime: number;   // 영상 시간(초) — 이 지점이 anchorBar 마디의 1박
   anchorBar: number;
   recOffset: number;    // (예전 방식) 녹음본 시간 = 첫 영상 시간 + recOffset — 이제는 recAt
@@ -459,6 +460,18 @@ const segAtT = (p: Project, t: number) => { const s = tempoSegs(p); let k = 0; f
 const segAtBar = (p: Project, n: number) => { const s = tempoSegs(p); let k = 0; for (let i = 1; i < s.length; i++) if (s[i].b0 <= n + 1e-9) k = i; return s[k]; };
 /** t(없으면 기본 템포)에서 한 박 · 한 마디 길이 */
 export const beatLen = (p: Project, t?: number) => (t === undefined ? p.beatsPerBar * 60 / p.bpm : segAtT(p, t).L) / p.beatsPerBar;
+/** 셋잇단 묶음 박자(6/8·9/8·12/8): 8분음표 3개씩 한 덩어리(♩.) */
+export const isCompound = (p: Project) => p.beatUnit === 8 && p.beatsPerBar % 3 === 0 && p.beatsPerBar >= 6;
+/** 박자표 글자 ('6/8') */
+export const meterText = (p: Project) => `${p.beatsPerBar}/${p.beatUnit || 4}`;
+/**
+ * 감지한 템포(보통 '느끼는 박', 4분음표 기준)를 이 박자의 BPM으로:
+ * x/8 박자는 BPM이 8분음표(♪) 기준 — 6/8·9/8·12/8은 느끼는 박이 ♩.이라 ×3, 3/8·5/8·7/8은 ♩ = ♪×2라 ×2
+ */
+export const unitK = (p: Pick<Project, 'beatsPerBar' | 'beatUnit'>, bpm = 100) => p.beatUnit !== 8 ? 1 : p.beatsPerBar % 3 === 0 ? (bpm * 3 <= 300 ? 3 : 1.5) : 2;
+export const unitBpm = (bpm: number, p: Pick<Project, 'beatsPerBar' | 'beatUnit'>) => p.beatUnit !== 8 ? bpm : Math.round(bpm * unitK(p, bpm) * 10) / 10;
+/** 템포 감지에 넘길 '느끼는 박' 기준 한 마디 박 수 (6/8 → 2, 12/8 → 4, 7/8 → 3.5) */
+export const feltBpb = (p: Pick<Project, 'beatsPerBar' | 'beatUnit'>) => p.beatsPerBar / unitK(p);
 export const barLen = (p: Project, t?: number) => t === undefined ? p.beatsPerBar * 60 / p.bpm : segAtT(p, t).L;
 export const bpmAt = (p: Project, t: number) => segAtT(p, t).bpm;
 /** 영상 시간 → 소수점 마디 번호 (n마디는 [n, n+1) 구간) */

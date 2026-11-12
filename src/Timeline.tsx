@@ -237,13 +237,24 @@ export function Timeline(props: Props) {
     }
     {
       // 박선: 마디마다 그 마디의 템포로 나눔 (악보마다 템포가 다를 수 있음)
+      const grp = p.beatUnit === 8 && p.beatsPerBar % 3 === 0 && p.beatsPerBar >= 6;
       ctx.strokeStyle = C.grid; ctx.lineWidth = 1; ctx.beginPath();
       for (let n = n0; n <= n1; n++) {
         const a = barStart(p, n), b = barStart(p, n + 1), w = (b - a) / p.beatsPerBar;
         if (w * v.pps < 7) continue;
-        for (let k = 1; k < p.beatsPerBar; k++) { const x = Math.round(X(a + k * w)) + 0.5; ctx.moveTo(x, 0); ctx.lineTo(x, contentH); }
+        for (let k = 1; k < p.beatsPerBar; k++) { if (grp && k % 3 === 0) continue; const x = Math.round(X(a + k * w)) + 0.5; ctx.moveTo(x, 0); ctx.lineTo(x, contentH); }
       }
       ctx.stroke();
+      // 6/8·9/8·12/8: ♪ 3개 묶음(♩.)의 첫 박은 조금 더 진하게
+      if (grp) {
+        ctx.strokeStyle = C.gridBar; ctx.globalAlpha = 0.6; ctx.beginPath();
+        for (let n = n0; n <= n1; n++) {
+          const a = barStart(p, n), b = barStart(p, n + 1), w = (b - a) / p.beatsPerBar;
+          if (w * 3 * v.pps < 7) continue;
+          for (let k = 3; k < p.beatsPerBar; k += 3) { const x = Math.round(X(a + k * w)) + 0.5; ctx.moveTo(x, 0); ctx.lineTo(x, contentH); }
+        }
+        ctx.stroke(); ctx.globalAlpha = 1;
+      }
     }
     for (let n = n0; n <= n1; n++) {
       const x = Math.round(X(barStart(p, n))) + 0.5;

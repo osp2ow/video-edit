@@ -1,0 +1,23 @@
+// 브라우저가 화면을 못 읽는 영상(HEVC 등)을 넣었을 때: 안내가 사라지지 않고 보이는지, 소리·편집은 되는지
+import { chromium } from 'playwright-core';
+const [V, SHOT] = process.argv.slice(2);
+const NM = new URL('../node_modules', import.meta.url).pathname;
+const map = { 'react.production.min.js': NM + '/react/umd/react.production.min.js', 'react-dom.production.min.js': NM + '/react-dom/umd/react-dom.production.min.js', 'pdf.min.js': NM + '/pdfjs-dist/build/pdf.min.js', 'pdf.worker.min.js': NM + '/pdfjs-dist/build/pdf.worker.min.js' };
+const browser = await chromium.launch({ executablePath: process.env.CHROME || '/opt/pw-browsers/chromium_headless_shell-1243/chrome-headless-shell-linux64/chrome-headless-shell' });
+const page = await browser.newPage({ viewport: { width: 1600, height: 1000 } });
+const logs = []; page.on('pageerror', e => logs.push('PAGEERROR ' + e.message));
+await page.route('**/*', r => { const u = r.request().url(); const f = Object.keys(map).find(k => u.endsWith('/' + k)); if (f) return r.fulfill({ path: map[f], contentType: 'application/javascript' }); if (u.includes('fonts.g') || u.includes('jsdelivr')) return r.abort(); return r.continue(); });
+await page.goto('file://' + new URL('../dist/index.html', import.meta.url).pathname);
+const ok = (n, c) => console.log(c ? 'ok  ' : 'FAIL', n);
+console.log('canPlayType hvc1:', await page.evaluate(() => document.createElement('video').canPlayType('video/mp4; codecs="hvc1.1.6.L93.B0"') || '(none)'));
+await page.setInputFiles('#f-video', V);
+await page.waitForTimeout(6000);
+const st = await page.textContent('.status').catch(() => '');
+const banner = await page.$eval('.vid-err', e => e.textContent).catch(() => null);
+console.log('status:', st); console.log('banner:', banner);
+ok('can\'t-play notice stays visible', !!banner && /재생할 수 없/.test(banner));
+const v = await page.evaluate(() => { const v = document.querySelector('video.hidden-video'); return { w: v.videoWidth, err: v.error?.code, rs: v.readyState }; });
+console.log('video el', JSON.stringify(v));
+if (SHOT) await page.screenshot({ path: SHOT });
+console.log(logs.join('\n') || 'no page errors');
+await browser.close();

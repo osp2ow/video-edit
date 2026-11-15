@@ -508,3 +508,10 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .thumb-imgs img { width: 34px; height: 34px; object-fit: contain; background: repeating-conic-gradient(#555 0 25%, #444 0 50%) 0 0 / 10px 10px; border-radius: 4px; flex: none; }
 .thumb-imgs .ell { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .thumb-imgs input[type=range] { width: 100%; }
+
+/* 영상 화면을 못 읽었을 때 미리보기 자리 안내 */
+.vid-err { position: absolute; left: 50%; top: 50%; transform: translate(-50%, -50%); width: min(520px, 92%); z-index: 5;
+  background: rgba(20, 16, 14, 0.96); border: 1px solid #ff8a1f; border-radius: 12px; padding: 16px 18px; color: #f3ece6; box-shadow: 0 10px 40px rgba(0,0,0,0.5); }
+.vid-err strong { display: block; color: #ffb36b; margin-bottom: 6px; font-size: 15px; }
+.vid-err p { margin: 0 0 8px; color: #cfc6bf; line-height: 1.5; word-break: break-all; }
+.vid-err ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }

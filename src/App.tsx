@@ -129,6 +129,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const [videoName, setVideoName] = useState('');
   const [recName, setRecName] = useState('');
   const [hasVideo, setHasVideo] = useState(false);
+  const [vidErr, setVidErr] = useState<string | null>(null);   // 화면을 못 읽은 기준 영상 이름 (안내 상자)
   const [duration, setDuration] = useState(0);
   const [vTrack, setVTrack] = useState<Track | null>(null);
   const [rTrack, setRTrack] = useState<Track | null>(null);
@@ -317,7 +318,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
       if (!masterFile.current || (cur && cur.videoName === file.name)) keep = true;
     }
     transportRef.current?.pause(); v.pause();
-    setHasVideo(false); setVTrack(null); setDuration(0);
+    setHasVideo(false); setVTrack(null); setDuration(0); setVidErr(null);
     setVideoName(file.name);
     masterFile.current = file;
     resetHistory();
@@ -1782,11 +1783,12 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
         onLoadedMetadata={e => {
           const v = e.currentTarget;
           setDuration(v.duration || 0);
-          if (!v.videoWidth) {
-            setMsg({ kind: 'warn', text: '이 PC의 크롬에서는 영상 화면을 재생할 수 없어요 (아이폰 HEVC 형식일 가능성이 커요). 아이폰 설정 › 카메라 › 포맷 › "높은 호환성"으로 찍거나, 다음 업데이트의 자동 변환을 기다려주세요.' });
-          } else setHasVideo(true);
+          // 소리만 읽히고 화면을 못 읽으면(아이폰 HEVC·HDR 영상을 지원 안 하는 PC 등) 미리보기 자리에 안내를 계속 띄워 둠
+          // (예전에는 경고 문구가 곧바로 '소리 분석 완료'에 덮여서 아무 안내 없이 멈춘 것처럼 보였음)
+          if (!v.videoWidth) setVidErr(videoName || '이 영상');
+          else { setHasVideo(true); setVidErr(null); }
         }}
-        onError={() => setMsg({ kind: 'warn', text: '영상을 열 수 없어요. 아이폰 HEVC 형식이라면 설정 › 카메라 › 포맷 › "높은 호환성"으로 찍은 영상을 넣어주세요.' })}
+        onError={() => { if (videoRef.current?.getAttribute('src')) setVidErr(videoName || '이 영상'); }}
       />
 
       <header className="top">
@@ -2087,6 +2089,17 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             </div>
           )}
           {fsOn && <button type="button" className="fs-exit" onClick={() => document.exitFullscreen?.()}>전체화면 끝내기 (Esc)</button>}
+          {vidErr && !hasVideo && (
+            <div className="vid-err" role="alert">
+              <strong>이 컴퓨터의 브라우저가 영상 화면을 재생할 수 없어요</strong>
+              <p className="small">{vidErr} · 소리는 읽혀서 박자 분석은 됐지만, 화면 재생·MP4 추출·썸네일은 안 돼요. 아이폰 기본 설정(HEVC·HDR)으로 찍은 영상이 윈도우 PC에서 자주 이래요.</p>
+              <ol className="small">
+                <li><b>맥에서 열기</b> — 학원 맥 미니의 크롬·사파리에서는 대부분 바로 열려요 (클라우드 프로젝트라 그대로 이어서 작업).</li>
+                <li><b>호환 형식으로 바꿔 넣기</b> — 맥 QuickTime으로 열고 파일 › 다음으로 내보내기 › 1080p(또는 4K) › 형식 '더 높은 호환성(H.264)'으로 저장한 뒤, 왼쪽 '연주 영상 1'의 <b>바꾸기</b>로 넣으면 설정은 그대로예요.</li>
+                <li><b>앞으로 찍을 영상</b> — 아이폰 설정 › 카메라 › 포맷 › '높은 호환성', 비디오 녹화 › 'HDR 비디오' 끔.</li>
+              </ol>
+            </div>
+          )}
           <Preview clean={fsOn} now={tnow} tlEnd={tlEnd} onPause={() => transportRef.current?.pause()} video={videoRef.current || document.createElement('video')} project={project} sheet={sheet}
             ratio={ratio} layout={layout} onLayout={setLayout} showSafe={showSafe} hasVideo={hasVideo} angles={angles} sources={srcMap} sheets={sheetMap}
             onCaptionMove={moveCaption}

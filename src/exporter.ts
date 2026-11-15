@@ -250,7 +250,7 @@ export async function exportMp4(inp: ExportInput, o: ExportOptions, plan: CodecP
   for (const v of allEls) { v.pause(); v.muted = true; v.playbackRate = 1; }
   onProgress(0, '영상 만드는 중');
 
-  let k = 0, rate = 1, drops = 0;
+  let k = 0, rate = 1, drops = 0, info = '';
   const MIN_RATE = 0.08;
   setExporting(true);
   // 1순위: 영상 파일을 직접 풀어서 장면을 하나도 빠짐없이 (재생 속도·탭 가림과 상관없음)
@@ -449,13 +449,21 @@ export async function exportMp4(inp: ExportInput, o: ExportOptions, plan: CodecP
     if (decoded) { decoded.main?.close(); for (const d of decoded.angles.values()) d.close(); for (const d of decoded.sources.values()) d.close(); }
     for (const d of ovDec.values()) d.close();
     if (drops) console.info(`[추출] 프레임 놓침 ${drops}번 → 되감아서 다시 받음 (마지막 속도 ${Math.round(rate * 100)}%)`);
+    // 점검용 한 줄: 어떤 방식으로 만들었는지 · 원본 영상 정보 · 장면 겹침/빠짐
+    if (decoded) {
+      const ds = [decoded.main, ...decoded.sources.values()].filter(Boolean) as FrameSource[];
+      info = '파일에서 직접 풀기 · ' + ds.map(d => { const f = d.info; return `원본 ${f.codec.split('.')[0]} ${f.fps.toFixed(2)}fps${f.uneven > 0.02 ? ` (장면 간격 들쭉날쭉 ${Math.round(f.uneven * 100)}%)` : ''} → ${o.fps}fps, 빠진 장면 ${f.skipped}`; }).join(' / ');
+    } else info = `재생하며 받기(이 브라우저가 영상 파일을 직접 못 풂) · ${o.fps}fps · 놓쳐서 다시 받은 곳 ${drops}번 · 마지막 속도 ${Math.round(rate * 100)}%`;
+    console.info('[추출] ' + info);
   }
   onProgress(1, '마무리 중');
   await venc.flush();
   venc.close(); aenc.close();
   if (encErr) throw encErr;
   muxer.finalize();
-  return new Blob([target.buffer], { type: 'video/mp4' });
+  const out = new Blob([target.buffer], { type: 'video/mp4' });
+  (out as any).exportInfo = info;
+  return out;
 }
 
 /** 파일 저장: 아티팩트 화면에서는 저장 확인창, 일반 페이지에서는 바로 다운로드 */

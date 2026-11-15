@@ -214,6 +214,7 @@ export function ExportDialog(p: Props) {
               {results.map(r => (
                 <li key={r.ratio}>
                   <div><b>{r.ratio} {RATIO_LABEL[r.ratio]}</b><span className="mono dim small"> {(r.blob.size / 1048576).toFixed(1)}MB · {r.secs.toFixed(0)}초 · {r.msg}</span></div>
+                  {(r.blob as any).exportInfo && <div className="dim small ex-info">{(r.blob as any).exportInfo}</div>}
                 </li>
               ))}
             </ul>

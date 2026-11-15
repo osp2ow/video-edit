@@ -23,6 +23,8 @@ export interface FrameSource {
   /** 영상 시간 t(초)에 화면에 보이는 장면 */
   frameAt(t: number): Promise<FrameImage | null>;
   close(): void;
+  /** 점검용: 원본 정보와 추출 중 받은 장면 통계 (겹침 = 같은 장면 다시, 빠짐 = 원본 장면을 건너뜀) */
+  info: { codec: string; fps: number; uneven: number; served: number; repeats: number; skipped: number };
 }
 
 interface Sample { cts: number; dts: number; size: number; offset: number; is_sync: boolean; duration: number; timescale: number }
@@ -111,6 +113,7 @@ export async function openFrameSource(blob: Blob): Promise<FrameSource | null> {
   // 그대로 60fps로 뽑으면 어떤 장면은 3번, 어떤 장면은 1번 나와 뚝뚝 끊겨 보임 → 원래 간격의 격자에 살짝 맞춤
   // (격자에서 1/4 장면 이상 떨어진 장면 = 진짜 가변 속도 구간은 그대로 둠)
   const tsUs = samples.map(s => toUs(s.cts));
+  let uneven = 0;
   {
     // 장면 칸 번호(빠진 장면은 칸을 건너뜀)와 시각으로 직선 맞추기 → 고른 간격 d와 시작 a
     const gaps = order.slice(1).map((o, k) => o.cts - order[k].cts).filter(g => g > 0).sort((x, y) => x - y);
@@ -127,6 +130,7 @@ export async function openFrameSource(blob: Blob): Promise<FrameSource | null> {
         for (let k = 0; k < N; k++) {
           const o = order[k], g = a + n[k] * d;
           const us = Math.abs(g - o.cts) < d / 4 ? toUs(g) : tsUs[o.i];
+          if (Math.abs(g - o.cts) > d * 0.04) uneven++;
           tsUs[o.i] = us > prev ? us : prev + 1;
           prev = tsUs[o.i];
         }
@@ -134,6 +138,11 @@ export async function openFrameSource(blob: Blob): Promise<FrameSource | null> {
     }
   }
 
+  const dispTs = order.map(o => tsUs[o.i]);   // 화면 순서 장면 시각 (점검용)
+  const dispIdx = (us: number) => { let lo = 0, hi = dispTs.length - 1; while (lo < hi) { const m = (lo + hi + 1) >> 1; if (dispTs[m] <= us) lo = m; else hi = m - 1; } return lo; };
+  const span = (order[order.length - 1].cts - order[0].cts) / ts;
+  const info = { codec: String(vt.codec || ''), fps: span > 0 ? (order.length - 1) / span : 0, uneven: 0, served: 0, repeats: 0, skipped: 0 };
+  let lastIdx = -1;
   let frames: any[] = [];          // 풀린 장면들 (화면 순서)
   let next = 0, flushed = false, decErr: any = null;
   let wake: (() => void) | null = null;
@@ -192,7 +201,9 @@ export async function openFrameSource(blob: Blob): Promise<FrameSource | null> {
     shownTs = f.timestamp;
   };
 
+  info.uneven = order.length ? uneven / order.length : 0;
   return {
+    info,
     width: W, height: H,
     duration: (order[order.length - 1].cts - order[0].cts) / ts,
     async frameAt(t: number) {
@@ -211,6 +222,7 @@ export async function openFrameSource(blob: Blob): Promise<FrameSource | null> {
       if (!best) best = frames[0];
       if (!best) return shownTs >= 0 ? canvas : null;
       draw(best);
+      { const ix = dispIdx(best.timestamp); info.served++; if (ix === lastIdx) info.repeats++; else if (lastIdx >= 0 && ix > lastIdx + 1) info.skipped += ix - lastIdx - 1; lastIdx = ix; }
       // 지난 장면은 정리 (디코더가 장면을 더 내놓을 수 있게)
       const keep: any[] = [];
       for (const f of frames) { if (f.timestamp < best.timestamp) f.close(); else keep.push(f); }

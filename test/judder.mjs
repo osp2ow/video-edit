@@ -19,4 +19,5 @@ await page.evaluate(() => { delete window.showSaveFilePicker; });
 await page.click('text=추출 시작');
 await page.waitForFunction(() => document.querySelector('.ok-text') || /실패|못 했|오류/.test(document.querySelector('.modal-body')?.textContent || ''), null, { timeout: 300000 });
 await (await dlP).saveAs(OUT);
+console.log('INFO', await page.evaluate(() => document.querySelector('.ex-info')?.textContent || '(없음)'));
 console.log(logs.join('\n')); await browser.close();

@@ -218,6 +218,20 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   .app.vert.cap-on { grid-template-columns: calc(var(--pvw) + 300px) minmax(300px, 1fr) 292px; }
   .app.vert .center { border-right: 1px solid var(--line); }
   .app.vert .panel.left { border-right: 1px solid var(--line); }
+  .app.vert .stage-wrap { padding: 10px; }
+  .app.vert .transport { padding: 8px 12px; gap: 8px; }
+  /* 넓은 화면: 미리보기를 더 크게 + 파일 · 자막 · 코드표를 나란히 칸으로 */
+  .app.vert.split {
+    --pvw: clamp(500px, calc((100vh - 190px) * 9 / 16 + 20px), 34vw);
+    grid-template-columns: var(--pvw) minmax(220px, 1fr) minmax(240px, 1.1fr) minmax(240px, 1fr) 292px;
+    grid-template-areas: "top top top top top" "center left cap chord right" "center bottom bottom bottom bottom";
+  }
+  .app.vert.split.r45 { --pvw: clamp(560px, calc((100vh - 190px) * 4 / 5 + 20px), 38vw); }
+  .split-col { min-height: 0; min-width: 0; display: flex; border-right: 1px solid var(--line); background: var(--panel); }
+  .cap-col { grid-area: cap; } .chord-col { grid-area: chord; }
+  .split-col .cap-studio { width: auto; flex: 1; min-width: 0; border-right: 0; animation: none; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
+  .split-col .chord-panel .row { flex-wrap: wrap; }
+  .split-col .subbox { grid-template-columns: minmax(0, 1fr); }
 }
 
 @media (max-width: 1100px) {
@@ -360,6 +374,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .fs-btn { font-size: 16px; padding: 0 10px; }
 .cs-head { display: flex; align-items: center; gap: 6px; }
 .cs-head h2 { margin: 0 auto 0 0; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); }
+.chord-panel > .row.between h2 { margin: 0; font-size: 11px; font-weight: 600; letter-spacing: 0.08em; color: var(--muted); }
 .cs-block { display: grid; gap: 7px; padding: 9px; border: 1px solid #ffd27a; border-radius: 10px; background: var(--bg); }
 .cs-input { width: 100%; box-sizing: border-box; resize: vertical; background: var(--bg); border: 1px solid var(--line); border-radius: 7px; padding: 7px 9px; font: 600 14px var(--font); }
 .cs-group { display: grid; gap: 8px; padding-top: 10px; border-top: 1px solid var(--line); }
@@ -504,7 +519,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .chord-btn:disabled { opacity: 0.45; cursor: default; }
 .chord-thumb { display: block; }
 /* 코드표 직접 만들기 */
-.chord-editor { display: block; width: 100%; max-width: 272px; background: #1e1b17; border: 1px solid var(--line); border-radius: 8px; cursor: crosshair; touch-action: none; }
+.chord-editor { display: block; width: 100%; max-width: 272px; height: auto; background: #1e1b17; border: 1px solid var(--line); border-radius: 8px; cursor: crosshair; touch-action: none; }
 .chord-opts { align-items: center; flex-wrap: wrap; }
 .chord-opts .mono { min-width: 20px; text-align: center; }
 .chord-lib-item { position: relative; }

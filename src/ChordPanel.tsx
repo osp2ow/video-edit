@@ -65,7 +65,7 @@ function ChordEditor({ data, onChange }: { data: ChordData; onChange: (d: ChordD
     onChange({ ...d, frets: f });
   };
   return (
-    <canvas ref={ref} className="chord-editor" style={{ width: W, height: H }} role="img" aria-label="지판: 칸을 눌러 점 찍기" title="칸을 누르면 점, 다시 누르면 지움 · 줄 왼쪽을 누르면 O → X → 없음"
+    <canvas ref={ref} className="chord-editor" style={{ aspectRatio: `${W} / ${H}` }} role="img" aria-label="지판: 칸을 눌러 점 찍기" title="칸을 누르면 점, 다시 누르면 지움 · 줄 왼쪽을 누르면 O → X → 없음"
       onPointerDown={press} onPointerMove={e => { const h = at(e); setHover(h && (h.s !== hover?.s || h.f !== hover?.f) ? h : h ? hover : null); }} onPointerLeave={() => setHover(null)} />
   );
 }
@@ -83,7 +83,7 @@ interface Props {
   onSize: (s: number) => void;
   onResetPos: () => void;
   onDelete: () => void;
-  onClose: () => void;
+  onClose?: () => void;
   disabled: boolean;
 }
 
@@ -95,7 +95,7 @@ export function ChordPanel(p: Props) {
     <aside id="chord-panel" className="cap-studio chord-panel" aria-label="코드표">
       <div className="row between">
         <h2>코드표 {p.count > 0 && <span className="dim small">{p.count}개</span>}</h2>
-        <button type="button" className="btn ghost sm" onClick={p.onClose}>닫기</button>
+        {p.onClose && <button type="button" className="btn ghost sm" onClick={p.onClose}>닫기</button>}
       </div>
       <button type="button" className="btn accent sm" disabled={p.disabled} onClick={p.onNew}>+ 새 코드표</button>
       {data ? (

@@ -194,6 +194,8 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const [levelGrid, setLevelGrid] = useState(false);   // 회전 슬라이더를 만지는 동안 미리보기에 수평 격자   // 타임라인에서 고른 영상 조각의 파일 (MAIN = 첫 영상)
   const [inOut, setInOut] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
   const [selCaption, setSelCaption] = useState<string | null>(null);
+  const [winW, setWinW] = useState(() => window.innerWidth);   // 창 너비 (세로 영상일 때 배치)
+  useEffect(() => { const f = () => setWinW(window.innerWidth); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
   const [studioOpen, setStudioOpenS] = useState(false);
   const [chordOpen, setChordOpenS] = useState(false);   // 코드표 패널 (자막 패널과 같은 자리라 하나만 열림)
   const setStudioOpen = (v: boolean) => { setStudioOpenS(v); if (v) setChordOpenS(false); };
@@ -1684,7 +1686,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     // eslint-disable-next-line
   }, [user?.uid]);
   useEffect(() => { setCapScope('one'); setPosScope('one'); }, [selCaption]);   // 다른 자막을 고르면 다시 '이 자막만'
-  const capEditStyle = selCap ? styleFor(project, ratio, selCap) : capStyle;
+  // 자막 패널이 다루는 자막 (코드표를 고른 상태면 없음 — 넓은 세로 화면에선 두 패널이 같이 보여서, 자막 패널을 만지면 코드표가 바뀌던 것 막음)
+  const textCap = selCap && !selCap.chord ? selCap : null;
+  const capEditStyle = textCap ? styleFor(project, ratio, textCap) : capStyle;
   /** 글꼴·위치는 늘 공통, 나머지(색·테두리·그림자·상자·등장 효과)는 capScope대로 — 기본은 이 자막만 */
   const applyCapPatch = (patch: Partial<CaptionStyle>, id: string | null) => {
     const p = projRef.current, shared: any = {}, look: any = {};
@@ -1718,19 +1722,19 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
     setProject({ captionStyles: { ...(p.captionStyles || {} as any), [ratio]: common }, captions: caps });
   };
   const setCapPatch = (patch: Partial<CaptionStyle>) => {
-    applyCapPatch(patch, selCap?.id || null);
+    applyCapPatch(patch, textCap?.id || null);
     if (patch.font || patch.weight) (document as any).fonts?.load?.(`${patch.weight || capEditStyle.weight} 40px "${patch.font || capEditStyle.font}"`, '가나다').catch(() => {});
   };
   /** 이 자막만의 꾸미기를 지우고 공통 꾸미기로 */
   const resetCapLook = () => {
-    if (!selCap) return;
-    const { style, ...rest } = selCap; setCaptions((projRef.current.captions || []).map(c => c.id === selCap.id ? rest as Caption : c));
+    if (!textCap) return;
+    const { style, ...rest } = textCap; setCaptions((projRef.current.captions || []).map(c => c.id === textCap.id ? rest as Caption : c));
   };
   /** 이 자막만의 위치를 지우고 공통 위치로 (지금 화면 비율) */
   const resetCapPos = () => {
-    if (!selCap?.pos) return;
-    const np = { ...selCap.pos }; delete np[ratio]; if (ratio === '9:16') delete np['4:5'];
-    setCaptions((projRef.current.captions || []).map(c => c.id === selCap.id ? (Object.keys(np).length ? { ...c, pos: np } : (({ pos: _p, ...r }) => r as Caption)(c)) : c));
+    if (!textCap?.pos) return;
+    const np = { ...textCap.pos }; delete np[ratio]; if (ratio === '9:16') delete np['4:5'];
+    setCaptions((projRef.current.captions || []).map(c => c.id === textCap.id ? (Object.keys(np).length ? { ...c, pos: np } : (({ pos: _p, ...r }) => r as Caption)(c)) : c));
   };
   /** 미리보기에서 자막을 끌어 옮김 — 개별 스타일이 있으면 그 자막만, 아니면 공통 */
   const moveCaption = (id: string, x: number, y: number) => {
@@ -1773,8 +1777,23 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const sheetSpan = nBars ? [sheetStart(project, nBars), sheetEnd(project, nBars)] : null;
   const nudgeSync = (d: number) => setProject({ ...recPatch(Math.round((recAtNow() - d) * 1000) / 1000), syncTouched: true });
 
+  // 세로 영상 + 넓은 화면: 자막·코드표 패널을 접었다 펴지 않고 파일 목록 옆에 칸으로 늘 펼쳐 둠
+  const vertUI = ratio !== '16:9' && winW > 1100, split = vertUI && winW >= 1560;
+  const capPanel = (
+          <CaptionStudio captions={captions.filter(c => !c.chord)} sel={textCap} onSelect={setSelCaption} onAdd={addCaption} onUpdate={updateCaption} onDelete={deleteCaption}
+            onSeek={seek} now={tnow} style={capEditStyle} scope={capScope} setScope={setCapScope} posScope={posScope} setPosScope={setPosScope} hasOwnPos={!!(textCap && ownPos(textCap, ratio))} onResetPos={resetCapPos} hasOwn={!!(textCap && ownLook(textCap))} onResetLook={resetCapLook} setStyle={setCapPatch}
+            onClose={split ? undefined : () => setStudioOpen(false)} focusKey={capFocus} disabled={!hasVideo} />
+  );
+  const chordPanel = (
+          <ChordPanel sel={selChord} count={chordCaps.length} size={chordPos.size} disabled={!hasVideo} lib={chordLib}
+            onNew={() => placeChord(blankChord(), false)} onPlace={d => placeChord(editableOf(d))}
+            onChange={d => selChord && updateCaption(selChord.id, { chord: d, text: d.name || '코드' })}
+            onSaveLib={d => saveChordLib([...chordLib, editableOf(d)])} onRemoveLib={i => saveChordLib(chordLib.filter((_, k) => k !== i))}
+            onSize={s => setChordPos({ size: s })} onResetPos={() => setChordPos(null)} onDelete={() => selChord && deleteCaption(selChord.id)}
+            onClose={split ? undefined : () => setChordOpen(false)} />
+  );
   return (
-    <div className={`app${ratio !== '16:9' ? ' vert' : ''}${ratio === '4:5' ? ' r45' : ''}${studioOpen || chordOpen ? ' cap-on' : ''}`}>
+    <div className={`app${vertUI ? ' vert' : ''}${ratio === '4:5' ? ' r45' : ''}${split ? ' split' : (studioOpen || chordOpen) ? ' cap-on' : ''}`}>
       <video
         ref={videoRef}
         playsInline
@@ -2061,20 +2080,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
 
       <main className="center">
         <div className="center-row">
-        {studioOpen ? (
-          <CaptionStudio captions={captions.filter(c => !c.chord)} sel={selCap?.chord ? null : selCap} onSelect={setSelCaption} onAdd={addCaption} onUpdate={updateCaption} onDelete={deleteCaption}
-            onSeek={seek} now={tnow} style={capEditStyle} scope={capScope} setScope={setCapScope} posScope={posScope} setPosScope={setPosScope} hasOwnPos={!!(selCap && ownPos(selCap, ratio))} onResetPos={resetCapPos} hasOwn={!!(selCap && ownLook(selCap))} onResetLook={resetCapLook} setStyle={setCapPatch}
-            onClose={() => setStudioOpen(false)} focusKey={capFocus} disabled={!hasVideo} />
-        ) : chordOpen ? (
-          <ChordPanel sel={selChord} count={chordCaps.length} size={chordPos.size} disabled={!hasVideo} lib={chordLib}
-            onNew={() => placeChord(blankChord(), false)} onPlace={d => placeChord(editableOf(d))}
-            onChange={d => selChord && updateCaption(selChord.id, { chord: d, text: d.name || '코드' })}
-            onSaveLib={d => saveChordLib([...chordLib, editableOf(d)])} onRemoveLib={i => saveChordLib(chordLib.filter((_, k) => k !== i))}
-            onSize={s => setChordPos({ size: s })} onResetPos={() => setChordPos(null)} onDelete={() => selChord && deleteCaption(selChord.id)}
-            onClose={() => setChordOpen(false)} />
-        ) : null}
+        {!split && (studioOpen ? capPanel : chordOpen ? chordPanel : null)}
         <div className="stage-wrap" ref={stageRef}>
-          {!fsOn && (!studioOpen || !chordOpen) && (
+          {!fsOn && !split && (!studioOpen || !chordOpen) && (
             <div className="studio-tabs">
               {!studioOpen && (
                 <button type="button" className="studio-tab" onClick={() => setStudioOpen(true)} aria-expanded={false} aria-controls="cap-studio" title="자막 패널 열기">
@@ -2145,6 +2153,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
           </div>
         </div>
       </main>
+
+      {split && <div className="split-col cap-col">{capPanel}</div>}
+      {split && <div className="split-col chord-col">{chordPanel}</div>}
 
       <aside className="panel right">
         <div className="tabs" role="tablist">

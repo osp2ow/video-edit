@@ -36,7 +36,7 @@ interface Props {
   onResetPos: () => void;
   onResetLook: () => void;
   setStyle: (patch: Partial<CaptionStyle>) => void;
-  onClose: () => void;
+  onClose?: () => void;
   focusKey: number;
   disabled: boolean;
 }
@@ -66,7 +66,7 @@ export function CaptionStudio(p: Props) {
       <div className="cs-head">
         <h2>자막</h2>
         <button type="button" className="btn accent sm" onClick={() => p.onAdd()} disabled={p.disabled} title="지금 위치에 자막 추가 (Shift+C)">+ 추가</button>
-        <button type="button" className="btn ghost sm" onClick={p.onClose} aria-label="자막 패널 접기" title="접기">▴</button>
+        {p.onClose && <button type="button" className="btn ghost sm" onClick={p.onClose} aria-label="자막 패널 접기" title="접기">▴</button>}
       </div>
 
       <textarea id="cap-text" ref={ta} rows={3} className="cs-input" value={p.sel ? p.sel.text : ''} disabled={p.disabled}

@@ -25,6 +25,27 @@ ok('9:16: timeline fills its width', Math.abs(m.tl - (m.bottom.width - 32)) < 40
 await page.click('.seg >> text=4:5'); await page.waitForTimeout(600);
 m = await meas(); console.log('4:5', JSON.stringify(m)); await shot('v45');
 ok('4:5: preview column is far left', m.center.x < 2 && m.stage.height > H * 0.6);
+// 넓은 화면: 파일 · 자막 · 코드표가 나란히 칸으로 (접는 탭 없음)
+if (W >= 1560) {
+  await page.click('.seg >> text=9:16'); await page.waitForTimeout(400);
+  const cap = await box('.cap-col'), ch = await box('.chord-col'); m = await meas();
+  console.log('split', JSON.stringify({ cap, ch }));
+  ok('wide: files | captions | chords side by side', cap && ch && Math.abs(cap.x - (m.left.x + m.left.width)) < 3 && Math.abs(ch.x - (cap.x + cap.width)) < 3 && ch.x + ch.width <= m.right.x + 2);
+  ok('wide: caption & chord panels are open (no fold tabs)', await page.locator('.studio-tab').count() === 0 && await page.locator('.cap-col #cap-text').count() === 1 && await page.locator('.chord-col #chord-panel').count() === 1);
+  ok('wide: caption panel scrolls inside its column', await page.evaluate(() => { const e = document.querySelector('.cap-col .cap-studio'); return e.scrollHeight > e.clientHeight && getComputedStyle(e).overflowY === 'auto'; }));
+  const nCap = () => page.evaluate(() => (window.__pveTransport.getProject().captions || []).length);
+  const c0 = await nCap();
+  await page.click('.cap-col >> text=+ 추가'); await page.waitForTimeout(300);
+  await page.fill('.cap-col #cap-text', '테스트 자막'); await page.waitForTimeout(300);
+  await page.click('.chord-col >> text=+ 새 코드표'); await page.waitForTimeout(400);
+  const caps = await page.evaluate(() => window.__pveTransport.getProject().captions || []);
+  ok('wide: caption & chord added from the side columns', caps.length === c0 + 2 && caps.some(c => c.text === '테스트 자막') && caps.some(c => c.chord));
+  await shot('v916split');
+  await page.click('.seg >> text=16:9'); await page.waitForTimeout(600);
+  m = await meas(); console.log('16:9 wide', JSON.stringify(m)); await shot('h169w');
+  ok('16:9 wide: original layout, panels folded', m.left.x < 2 && m.bottom.width > W - 4 && await page.locator('.cap-col').count() === 0 && await page.locator('.studio-tab').count() >= 1);
+  console.log(logs.join('\n')); await browser.close(); process.exit(0);
+}
 // 자막 패널 열면 미리보기 크기 유지
 await page.click('.seg >> text=9:16'); await page.waitForTimeout(400);
 const st0 = (await meas()).stage;

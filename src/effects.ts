@@ -5,7 +5,7 @@ import { retouchFaces } from './face';
 import { CardLayout, Project, Fx, ColorFilter, TransType, MAIN, getFx, getXf, angleAt, barLen, beatLen, LAYOUT_LABEL, cardSpan, ratioOfWH, cardAlpha, srcAt, CardStyle, cardStyleOf, NEUTRAL_FILTER, sheetClipAt, cardPageAt, FIRST_PAGE, clipFadeAt, Clip, clipsOf, clipEnd, Overlay, overlaysAt } from './model';
 import { SheetData } from './sheet';
 import { Angle } from './angles';
-import { drawVideo, drawCard, drawCaptions, FONT, safeZones } from './render';
+import { drawVideo, drawCard, drawCaptions, FONT, safeZones, cardBox } from './render';
 
 export interface Env {
   master: HTMLVideoElement;
@@ -512,6 +512,7 @@ export function renderComposite(ctx: CanvasRenderingContext2D, W: number, H: num
 
   // 3) 악보 카드 · 자막
   opts.beforeCard?.();
+  let cardR: { x: number; y: number; w: number; h: number } | null = null;   // 이번 장면의 악보 카드 자리 (로고가 피해 가게)
   {
     // 악보 카드: 타임라인 '악보' 줄의 구간에서만 (편집 화면에서는 숨은 구간도 흐리게 보여줌)
     // 악보 숨김이면 안 그림 · 악보가 없으면 미리보기에서만 자리 안내 (추출 영상에는 빈 카드가 들어가지 않게)
@@ -519,7 +520,7 @@ export function renderComposite(ctx: CanvasRenderingContext2D, W: number, H: num
     const hidden = getFx(p).sheetHidden || (!sh?.bars.length && !opts.preview);
     const ca = hidden ? 0 : sh?.bars.length ? cardAlpha(p, t, env.sheet?.bars.length || 0) : 1;
     const a = Math.max(ca, opts.ghostCard ? 0.22 : 0);
-    if (a > 0.001) { ctx.save(); ctx.globalAlpha = a; drawCard(ctx, W, H, t, p, sh, env.layout); ctx.restore(); }
+    if (a > 0.001) { ctx.save(); ctx.globalAlpha = a; drawCard(ctx, W, H, t, p, sh, env.layout); ctx.restore(); if (env.layout && sh?.bars.length && ca > 0.001) cardR = cardBox(env.layout, W, H, sh, p); }   // 실제 악보가 보일 때만 (미리보기 빈 안내 카드는 빼고)
   }
   drawCaptions(ctx, W, H, t, p);
   if (opts.viewTrack) return;
@@ -530,7 +531,10 @@ export function renderComposite(ctx: CanvasRenderingContext2D, W: number, H: num
     const w = W * fx.watermark.size, h = w * logo.naturalHeight / logo.naturalWidth, mg = W * 0.04;
     const top = ratioOf(W, H) === '9:16' ? H * 0.15 : mg;
     const x = fx.watermark.pos.endsWith('l') ? mg : W - w - mg;
-    const y = fx.watermark.pos.startsWith('t') ? top : H - h - (ratioOf(W, H) === '9:16' ? H * 0.21 : mg);
+    let y = fx.watermark.pos.startsWith('t') ? top : H - h - (ratioOf(W, H) === '9:16' ? H * 0.21 : mg);
+    // 악보 카드와 겹치면 카드 바깥(위쪽 로고는 카드 아래, 아래쪽 로고는 카드 위)으로 비켜 감 — 악보를 가리지 않게
+    if (cardR && x < cardR.x + cardR.w && x + w > cardR.x && y < cardR.y + cardR.h && y + h > cardR.y)
+      y = fx.watermark.pos.startsWith('t') ? cardR.y + cardR.h + mg * 0.5 : cardR.y - h - mg * 0.5;
     ctx.save(); ctx.globalAlpha = fx.watermark.opacity; ctx.drawImage(logo, x, y, w, h); ctx.restore();
   }
 

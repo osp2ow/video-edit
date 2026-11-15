@@ -26,12 +26,16 @@ await page.click('.seg >> text=4:5'); await page.waitForTimeout(600);
 m = await meas(); console.log('4:5', JSON.stringify(m)); await shot('v45');
 ok('4:5: preview column is far left', m.center.x < 2 && m.stage.height > H * 0.6);
 // 넓은 화면: 파일 · 자막 · 코드표가 나란히 칸으로 (접는 탭 없음)
-if (W >= 1560) {
+if (W >= 1180) {
   await page.click('.seg >> text=9:16'); await page.waitForTimeout(400);
   const cap = await box('.cap-col'), ch = await box('.chord-col'); m = await meas();
   console.log('split', JSON.stringify({ cap, ch }));
-  ok('wide: files | captions | chords side by side', cap && ch && Math.abs(cap.x - (m.left.x + m.left.width)) < 3 && Math.abs(ch.x - (cap.x + cap.width)) < 3 && ch.x + ch.width <= m.right.x + 2);
-  ok('wide: caption & chord panels are open (no fold tabs)', await page.locator('.studio-tab').count() === 0 && await page.locator('.cap-col #cap-text').count() === 1 && await page.locator('.chord-col #chord-panel').count() === 1);
+  ok('wide: files | captions | chord strip side by side', cap && ch && Math.abs(cap.x - (m.left.x + m.left.width)) < 3 && Math.abs(ch.x - (cap.x + cap.width)) < 3 && ch.x + ch.width <= m.right.x + 2);
+  ok('wide: caption panel open, chord folded by default', await page.locator('.studio-tab').count() === 0 && await page.locator('.cap-col #cap-text').count() === 1 && await page.locator('.chord-col #chord-panel').count() === 0 && ch.width < 60);
+  await shot('v916fold');
+  await page.click('.chord-fold'); await page.waitForTimeout(400);
+  const ch2 = await box('.chord-col'), cap2 = await box('.cap-col'); console.log('chord open', JSON.stringify({ cap2, ch2 }));
+  ok('wide: chord strip opens into a column', await page.locator('.chord-col #chord-panel').count() === 1 && ch2.width >= 210 && cap2.width >= 200 && ch2.x + ch2.width <= m.right.x + 2);
   ok('wide: caption panel scrolls inside its column', await page.evaluate(() => { const e = document.querySelector('.cap-col .cap-studio'); return e.scrollHeight > e.clientHeight && getComputedStyle(e).overflowY === 'auto'; }));
   const nCap = () => page.evaluate(() => (window.__pveTransport.getProject().captions || []).length);
   const c0 = await nCap();

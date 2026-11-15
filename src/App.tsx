@@ -198,7 +198,8 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   useEffect(() => { const f = () => setWinW(window.innerWidth); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
   const [studioOpen, setStudioOpenS] = useState(false);
   const [chordOpen, setChordOpenS] = useState(false);   // 코드표 패널 (자막 패널과 같은 자리라 하나만 열림)
-  const setStudioOpen = (v: boolean) => { setStudioOpenS(v); if (v) setChordOpenS(false); };
+  const splitRef = useRef(false);   // 자막·코드표가 나란히 칸으로 있으면 자막을 열어도 코드표를 접지 않음
+  const setStudioOpen = (v: boolean) => { setStudioOpenS(v); if (v && !splitRef.current) setChordOpenS(false); };
   const setChordOpen = (v: boolean) => { setChordOpenS(v); if (v) setStudioOpenS(false); };
   const [capFocus, setCapFocus] = useState(0);
   // ---------- 클라우드 프로젝트 ----------
@@ -1777,8 +1778,10 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const sheetSpan = nBars ? [sheetStart(project, nBars), sheetEnd(project, nBars)] : null;
   const nudgeSync = (d: number) => setProject({ ...recPatch(Math.round((recAtNow() - d) * 1000) / 1000), syncTouched: true });
 
-  // 세로 영상 + 넓은 화면: 자막·코드표 패널을 접었다 펴지 않고 파일 목록 옆에 칸으로 늘 펼쳐 둠
-  const vertUI = ratio !== '16:9' && winW > 1100, split = vertUI && winW >= 1560;
+  // 세로 영상(창 너비 1180px 이상): 자막 패널은 파일 목록 옆 칸에 늘 펼쳐 두고, 코드표는 그 옆에 접힌 띠(누르면 칸으로 펼침)
+  const vertUI = ratio !== '16:9' && winW > 1100, split = vertUI && winW >= 1180;
+  splitRef.current = split;
+  useEffect(() => { if (!split && studioOpen && chordOpen) setChordOpenS(false); }, [split]);   // 나란히 칸에서 둘 다 열어 둔 채 좁아지면 하나만
   const capPanel = (
           <CaptionStudio captions={captions.filter(c => !c.chord)} sel={textCap} onSelect={setSelCaption} onAdd={addCaption} onUpdate={updateCaption} onDelete={deleteCaption}
             onSeek={seek} now={tnow} style={capEditStyle} scope={capScope} setScope={setCapScope} posScope={posScope} setPosScope={setPosScope} hasOwnPos={!!(textCap && ownPos(textCap, ratio))} onResetPos={resetCapPos} hasOwn={!!(textCap && ownLook(textCap))} onResetLook={resetCapLook} setStyle={setCapPatch}
@@ -1790,7 +1793,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             onChange={d => selChord && updateCaption(selChord.id, { chord: d, text: d.name || '코드' })}
             onSaveLib={d => saveChordLib([...chordLib, editableOf(d)])} onRemoveLib={i => saveChordLib(chordLib.filter((_, k) => k !== i))}
             onSize={s => setChordPos({ size: s })} onResetPos={() => setChordPos(null)} onDelete={() => selChord && deleteCaption(selChord.id)}
-            onClose={split ? undefined : () => setChordOpen(false)} />
+            onClose={() => setChordOpen(false)} />
   );
   return (
     <div className={`app${vertUI ? ' vert' : ''}${ratio === '4:5' ? ' r45' : ''}${split ? ' split' : (studioOpen || chordOpen) ? ' cap-on' : ''}`}>
@@ -2155,7 +2158,13 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
       </main>
 
       {split && <div className="split-col cap-col">{capPanel}</div>}
-      {split && <div className="split-col chord-col">{chordPanel}</div>}
+      {split && (chordOpen ? <div className="split-col chord-col">{chordPanel}</div> : (
+        <div className="split-col chord-col folded">
+          <button type="button" className="chord-fold" onClick={() => setChordOpen(true)} aria-expanded={false} aria-controls="chord-panel" title="코드표 펼치기">
+            <span className="st-ico" aria-hidden="true">♯</span><span className="cf-txt">코드표</span>{chordCaps.length > 0 && <span className="st-n">{chordCaps.length}</span>}<span aria-hidden="true">▸</span>
+          </button>
+        </div>
+      ))}
 
       <aside className="panel right">
         <div className="tabs" role="tablist">

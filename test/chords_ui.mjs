@@ -18,7 +18,8 @@ const tl = await page.locator('.tl-canvas canvas').boundingBox();
 const end = await page.evaluate(() => { const [m, s] = document.querySelector('.now-t').nextElementSibling.textContent.replace('/', '').trim().split(':'); return +m * 60 + +s; });
 const X = t => tl.x + (t + end * 0.01) * ((tl.width - 2) / (end * 1.02));
 const seek = async t => { await page.mouse.click(X(t), tl.y + 21); await page.waitForTimeout(300); };
-if (await page.locator('.chord-tab').count()) await page.click('.chord-tab');   // 넓은 세로 화면에선 코드표 칸이 늘 열려 있음
+if (await page.locator('.chord-tab').count()) await page.click('.chord-tab');   // 접는 탭 (예전 배치)
+if (await page.locator('.chord-fold').count()) await page.click('.chord-fold');   // 세로 영상 나란히 배치: 접힌 코드표 띠
 ok('no preset chord list', await page.locator('#chord-panel .chord-roots').count() === 0);
 await seek(2);
 await page.click('#chord-panel >> text=+ 새 코드표'); await page.waitForTimeout(200);

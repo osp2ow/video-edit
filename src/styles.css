@@ -219,19 +219,28 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
   .app.vert .center { border-right: 1px solid var(--line); }
   .app.vert .panel.left { border-right: 1px solid var(--line); }
   .app.vert .stage-wrap { padding: 10px; }
-  .app.vert .transport { padding: 8px 12px; gap: 8px; }
+  .app.vert .transport { padding: 8px 12px; gap: 6px 8px; }
+  /* 좁은 미리보기 칸에서도 재생줄이 2줄로: [⏮ ▶ ⏭ 시간] / [MP4 추출 ⛶ 썸네일 마디] */
+  .app.vert .clock { font-size: 13px; margin-left: 2px; gap: 4px; }
+  .app.vert .transport .btn.ghost:not(.fs-btn) { padding-left: 8px; padding-right: 8px; }
+  .app.vert .barpos { margin-left: auto; }
   /* 넓은 화면: 미리보기를 더 크게 + 파일 · 자막 · 코드표를 나란히 칸으로 */
   .app.vert.split {
-    --pvw: clamp(500px, calc((100vh - 190px) * 9 / 16 + 20px), 34vw);
-    grid-template-columns: var(--pvw) minmax(220px, 1fr) minmax(240px, 1.1fr) minmax(240px, 1fr) 292px;
+    --pvw: clamp(max(360px, 25vw), calc((100vh - 190px) * 9 / 16 + 20px), 34vw);
+    grid-template-columns: var(--pvw) minmax(170px, 1fr) minmax(210px, 1.1fr) auto 292px;
     grid-template-areas: "top top top top top" "center left cap chord right" "center bottom bottom bottom bottom";
   }
-  .app.vert.split.r45 { --pvw: clamp(560px, calc((100vh - 190px) * 4 / 5 + 20px), 38vw); }
+  .app.vert.split.r45 { --pvw: clamp(400px, calc((100vh - 190px) * 4 / 5 + 20px), 38vw); }
   .split-col { min-height: 0; min-width: 0; display: flex; border-right: 1px solid var(--line); background: var(--panel); }
   .cap-col { grid-area: cap; } .chord-col { grid-area: chord; }
   .split-col .cap-studio { width: auto; flex: 1; min-width: 0; border-right: 0; animation: none; grid-template-columns: minmax(0, 1fr); overflow-x: hidden; }
   .split-col .chord-panel .row { flex-wrap: wrap; }
   .split-col .subbox { grid-template-columns: minmax(0, 1fr); }
+  .chord-col:not(.folded) { width: clamp(210px, 18vw, 330px); }
+  .chord-col.folded { width: 44px; }
+  .chord-fold { flex: 1; display: flex; flex-direction: column; align-items: center; gap: 8px; padding: 14px 0; border: 0; background: transparent; color: var(--muted); cursor: pointer; font: inherit; font-size: 12.5px; font-weight: 600; }
+  .chord-fold:hover { background: #221f1a; color: var(--fg); }
+  .chord-fold .cf-txt { writing-mode: vertical-rl; letter-spacing: 0.1em; }
 }
 
 @media (max-width: 1100px) {

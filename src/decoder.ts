@@ -107,6 +107,32 @@ export async function openFrameSource(blob: Blob): Promise<FrameSource | null> {
   const cctx = canvas.getContext('2d')!;
   const order = samples.map((s, i) => ({ i, cts: s.cts })).sort((a, b) => a.cts - b.cts);   // 화면 순서
   const toUs = (v: number) => Math.round(v / ts * 1e6);
+  // 장면 시각을 고르게: 다른 편집기(캡컷 등)에서 만든 영상은 장면 시각이 몇 ms씩 들쭉날쭉한 경우가 있어서
+  // 그대로 60fps로 뽑으면 어떤 장면은 3번, 어떤 장면은 1번 나와 뚝뚝 끊겨 보임 → 원래 간격의 격자에 살짝 맞춤
+  // (격자에서 1/4 장면 이상 떨어진 장면 = 진짜 가변 속도 구간은 그대로 둠)
+  const tsUs = samples.map(s => toUs(s.cts));
+  {
+    // 장면 칸 번호(빠진 장면은 칸을 건너뜀)와 시각으로 직선 맞추기 → 고른 간격 d와 시작 a
+    const gaps = order.slice(1).map((o, k) => o.cts - order[k].cts).filter(g => g > 0).sort((x, y) => x - y);
+    const dm = gaps.length ? gaps[gaps.length >> 1] : 0;
+    if (dm > 0 && order.length > 2) {
+      const n = [0];
+      for (let k = 1; k < order.length; k++) n.push(n[k - 1] + Math.max(1, Math.round((order[k].cts - order[k - 1].cts) / dm)));
+      const N = order.length, mx = n.reduce((x, y) => x + y, 0) / N, my = order.reduce((x, o) => x + o.cts, 0) / N;
+      let sxy = 0, sxx = 0;
+      for (let k = 0; k < N; k++) { sxy += (n[k] - mx) * (order[k].cts - my); sxx += (n[k] - mx) ** 2; }
+      const d = sxx > 0 ? sxy / sxx : 0, a = my - d * mx;
+      if (d > 0) {
+        let prev = -Infinity;
+        for (let k = 0; k < N; k++) {
+          const o = order[k], g = a + n[k] * d;
+          const us = Math.abs(g - o.cts) < d / 4 ? toUs(g) : tsUs[o.i];
+          tsUs[o.i] = us > prev ? us : prev + 1;
+          prev = tsUs[o.i];
+        }
+      }
+    }
+  }
 
   let frames: any[] = [];          // 풀린 장면들 (화면 순서)
   let next = 0, flushed = false, decErr: any = null;
@@ -130,7 +156,7 @@ export async function openFrameSource(blob: Blob): Promise<FrameSource | null> {
   /** 화면 시간 tUs 이전(또는 같은) 마지막 키프레임부터 */
   const keyBefore = (tUs: number) => {
     let k = 0;
-    for (let i = 0; i < samples.length; i++) if (samples[i].is_sync && toUs(samples[i].cts) <= tUs) k = i;
+    for (let i = 0; i < samples.length; i++) if (samples[i].is_sync && tsUs[i] <= tUs) k = i;
     return k;
   };
   const waitOutput = () => new Promise<void>(r => { wake = r; setTimeout(r, 200); });
@@ -146,7 +172,7 @@ export async function openFrameSource(blob: Blob): Promise<FrameSource | null> {
       if (next < samples.length && dec.decodeQueueSize < 6 && frames.length < 8) {
         const s = samples[next++];
         const data = new Uint8Array(await blob.slice(s.offset, s.offset + s.size).arrayBuffer());
-        dec.decode(new (window as any).EncodedVideoChunk({ type: s.is_sync ? 'key' : 'delta', timestamp: toUs(s.cts), duration: toUs(s.duration), data }));
+        dec.decode(new (window as any).EncodedVideoChunk({ type: s.is_sync ? 'key' : 'delta', timestamp: tsUs[next - 1], duration: toUs(s.duration), data }));
         continue;
       }
       if (next >= samples.length) {
@@ -173,7 +199,7 @@ export async function openFrameSource(blob: Blob): Promise<FrameSource | null> {
       const tUs = Math.round((t - delay + mediaStart) * 1e6);
       if (t < delay) return null;
       const oldest = frames.length ? frames[0].timestamp : (shownTs >= 0 ? shownTs : -Infinity);
-      const fed = next > 0 ? toUs(samples[Math.min(next, samples.length) - 1].cts) : -Infinity;
+      const fed = next > 0 ? tsUs[Math.min(next, samples.length) - 1] : -Infinity;
       // 뒤로 가거나 한참 앞으로 건너뛰면 가까운 키프레임부터 다시
       if (tUs < oldest - 1000 || (next === 0 && !frames.length) || tUs > fed + 2_000_000) {
         const k = keyBefore(tUs);

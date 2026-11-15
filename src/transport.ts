@@ -93,13 +93,18 @@ export class Transport {
       // 다른 영상으로 막 넘어온 순간: 위치를 찾는 중이면 다시 지정하지 않고 기다림
       // (예전에는 매 순간 다시 지정해서 찾기가 끝나지 않고 재생도 시작되지 않아 멈춰 보였음)
       if (!el.seeking && Math.abs(el.currentTime - s) > 0.04) this.jump(el, s + (el.readyState >= 3 ? 0 : lead));
-      el.playbackRate = 1;
+      el.playbackRate = 1; (el as any).__corr = 0; (el as any).__playAt = performance.now();
       el.play().catch(() => {});   // 찾는 중이어도 재생을 걸어 두면 준비되는 대로 나옴
     } else if (!el.seeking && !(el as any).__seekHold) {
-      // 영상이 시계보다 앞서거나 늦으면: 조금이면 재생 속도로, 많이면 위치를 옮겨서 맞춤
-      const drift = s - el.currentTime;
-      if (Math.abs(drift) > 0.25) { el.playbackRate = 1; this.jump(el, s + (drift > 0 ? lead : 0)); }
-      else if (Math.abs(drift) > 0.02) el.playbackRate = 1 + Math.max(-0.1, Math.min(0.1, drift * 1.5));
+      // 영상이 시계보다 앞서거나 늦으면: 조금이면 재생 속도로, 많이면 위치를 옮겨서 맞춤.
+      // 재생 속도는 '어긋남이 0.05초를 넘을 때 한 번 바꾸고, 거의 맞으면 1로 되돌리기'만 함.
+      // (예전에는 매 화면마다 속도를 조금씩 바꿨는데, 소리가 있는 영상은 속도를 바꿀 때마다 브라우저가 소리를 다시 맞추느라
+      //  조금씩 밀려서 끝내 못 따라잡고 → 속도가 계속 1.04~1.1배로 출렁여 영상 소리가 늘어지고 울렁거리게 들렸음)
+      const v: any = el, drift = s - el.currentTime;
+      if (Math.abs(drift) > 0.25) { el.playbackRate = 1; v.__corr = 0; this.jump(el, s + (drift > 0 ? lead : 0)); }
+      else if (v.__corr) { if (drift * v.__corr < 0.008) { el.playbackRate = 1; v.__corr = 0; } }
+      // 막 재생을 시작했거나 위치를 옮긴 직후 2초 동안은 영상이 스스로 따라붙으므로(브라우저 소리 준비) 크게 어긋날 때만
+      else if (Math.abs(drift) > (performance.now() - (v.__playAt || 0) < 2000 ? 0.12 : 0.05)) { v.__corr = drift > 0 ? 1 : -1; el.playbackRate = 1 + 0.05 * v.__corr; }
       else if (el.playbackRate !== 1) el.playbackRate = 1;
     }
   }
@@ -108,6 +113,7 @@ export class Transport {
    *  (키프레임이 드문 영상은 위치를 찾는 동안 맨 앞 장면이 잠깐 보일 수 있어서) */
   private jump(el: HTMLVideoElement, s: number, hold = true) {
     const v: any = el;
+    v.__playAt = performance.now();
     if (!hold) { v.__seekHold = false; v.__seekTok = (v.__seekTok || 0) + 1; el.currentTime = s; return; }   // 멈춰서 훑어볼 때는 바로바로 보이게
     v.__seekHold = true;
     const tok = (v.__seekTok = (v.__seekTok || 0) + 1);
@@ -149,10 +155,19 @@ export class Transport {
         el.currentTime = s;
         await new Promise<void>(r => { const f = () => { el.removeEventListener('seeked', f); r(); }; el.addEventListener('seeked', f); setTimeout(f, 500); });
       }
-      el.playbackRate = 1;
+      el.playbackRate = 1; (el as any).__corr = 0; (el as any).__playAt = performance.now();
       await Promise.race([el.play().catch(() => {}), new Promise(r => setTimeout(r, 700))]);
     }
     if (tok !== this.starting || !this.playing) return;   // 그 사이에 멈춤
+    // 영상이 실제로 0.1초쯤 흘러갈 때까지 기다렸다가 그 위치에서 시계를 출발
+    // (소리 있는 영상은 처음 잠깐 위치가 들쭉날쭉해서, 바로 출발하면 영상이 계속 0.05~0.1초 늦은 채로 감 → 따라잡느라 속도를 바꾸게 됨)
+    if (c && el && !el.paused) {
+      const s0 = el.currentTime, t0 = performance.now();
+      while (el.currentTime <= s0 + 0.1 && performance.now() - t0 < 600 && !el.paused) await new Promise(r => { requestAnimationFrame(() => r(0)); setTimeout(r, 20); });
+      if (tok !== this.starting || !this.playing) return;
+      const vt = c.start + (el.currentTime - c.srcIn);
+      if (el.currentTime > s0 && Math.abs(vt - T) < 0.3) T = vt;
+    }
     this.starting = 0;
     this.player.start(T);
     this.onState();
@@ -163,8 +178,8 @@ export class Transport {
     this.playing = false;
     this.starting = 0;
     this.player.stop();
-    for (const v of this.els().values()) { if (!v.paused) v.pause(); v.playbackRate = 1; }
-    for (const v of this.ovEls().values()) { if (!v.paused) v.pause(); v.playbackRate = 1; }
+    for (const v of this.els().values()) { if (!v.paused) v.pause(); v.playbackRate = 1; (v as any).__corr = 0; }
+    for (const v of this.ovEls().values()) { if (!v.paused) v.pause(); v.playbackRate = 1; (v as any).__corr = 0; }
     this.syncOv(this.T, false);
     this.onState();
   }

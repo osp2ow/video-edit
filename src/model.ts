@@ -225,7 +225,7 @@ export interface Fx {
   kenBurns: number;
   preset: string; filter: ColorFilter; vignette: number;
   logo: string | null;
-  watermark: { on: boolean; pos: 'tl' | 'tr' | 'bl' | 'br'; size: number; opacity: number };
+  watermark: { on: boolean; pos: 'tl' | 'tr' | 'bl' | 'br'; size: number; opacity: number; at?: Partial<Record<Ratio, { x: number; y: number }>> };   // at: 미리보기에서 직접 옮긴 자리(왼쪽 위, 화면 비율) — 비율마다
   punch: 'off' | 'manual' | 'bar' | 'beat' | 'hits'; punchAmt: number;
   zooms: ZoomSeg[];   // 서서히 확대 구간
   punches: Punch[];   // 직접 찍은 지점 (펀치 줌 · 크래시 플래시 · 화면 흔들림)

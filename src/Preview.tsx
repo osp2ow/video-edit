@@ -7,7 +7,7 @@ export { safeZones };
 import { cardBox, drawVideo, drawCard, drawCaptions, FONT, videoRect, croppedRect, captionBox, captionStyleOf, activeCaptions, cardMetrics, sheetZoom } from './render';
 import { Angle, activeSource } from './angles';
 import { isExporting } from './exporter';
-import { renderComposite, sheetAt, activeTitleCard, cardSafeRect, clampCardY, CardLayoutResult, pipBox, ovBox } from './effects';
+import { renderComposite, sheetAt, activeTitleCard, cardSafeRect, clampCardY, CardLayoutResult, pipBox, ovBox, logoDrawn } from './effects';
 
 const { useRef, useEffect, useState } = React;
 
@@ -32,6 +32,7 @@ interface Props {
   onPip?: (pos: PipPos | null) => void;
   ovEls?: Map<string, HTMLVideoElement>;              // PIP 영상 조각별 <video>
   onOvPos?: (id: string, pos: PipPos | null) => void;  // PIP 영상 옮기기·크기 (null = 기본 자리로)
+  onLogoPos?: (pos: { x: number; y: number } | null, size?: number) => void;   // 로고 워터마크 옮기기·크기 (null = 정해진 자리로)
   levelGrid?: boolean;   // 수평 맞추기용 격자
   onEditChord?: (id: string) => void;   // 코드표 더블클릭 → 코드표 패널
   onChordSize?: (size: number) => void;   // 코드표 모서리 끌기 → 크기 (모든 코드표 공통)   // PIP 작은 화면 옮기기·크기 (null = 기본 자리로)
@@ -68,11 +69,12 @@ interface Drag {
   cap0?: CaptionStyle; capId?: string;
   tcKind?: 'intro' | 'outro'; tcBox?: CardLayoutResult;   // 인트로·엔딩 카드 글상자
   guides: { x?: number; y?: number }[];
-  pip0?: { x: number; y: number; w: number; h: number; ar: number; ov?: string };   // PIP 작은 화면 (드래그 시작 때)
+  pip0?: { x: number; y: number; w: number; h: number; ar: number; ov?: string; logo?: boolean };   // PIP 작은 화면 (드래그 시작 때)
 }
 
 export function Preview(props: Props) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
+  const hoverLogo = useRef(false);   // 마우스가 로고 위 (테두리를 로고에 그림)
   const live = useRef(props);
   live.current = props;
   const drag = useRef<Drag | null>(null);
@@ -87,6 +89,7 @@ export function Preview(props: Props) {
     const x = (e.clientX - r.left) * (W / r.width), y = (e.clientY - r.top) * (H / r.height);
     const tch = tcHit(x, y);
     if (tch) { live.current.onPause?.(); live.current.onEditCard?.(tch.kind, tch.page); return; }
+    if (logoHit(x, y)) { live.current.onLogoPos?.(null); return; }   // 로고 더블클릭: 정해진 자리(↖↗↙↘)로
     if (!capHit(x, y) && pipHit(x, y)) { const b = pipNow(); if (b?.ov) live.current.onOvPos?.(b.ov, null); else live.current.onPip?.(null); return; }   // PIP 더블클릭: 기본 자리로
     {
       // 악보 위·아래 가장자리 더블클릭: 자동 여백으로 되돌림
@@ -144,7 +147,8 @@ export function Preview(props: Props) {
           // PIP 작은 화면: 마우스를 올리거나 옮기는 중이면 테두리·모서리 손잡이
           {
             const pm = drag.current?.mode === 'pip' || drag.current?.mode === 'pipr' ? drag.current.mode : hover.current === 'pip' || hover.current === 'pipr' ? hover.current : null;
-            const pb = pm && !clean ? pipNow() : null;
+            const onLogo = drag.current ? !!drag.current.pip0?.logo : hoverLogo.current;
+            const pb = pm && !clean ? (onLogo ? logoNow() : pipNow()) : null;
             if (pb) drawPipOutline(ctx, w, pb, drag.current?.mode === pm ? drag.current.guides : [], h);
           }
           // 영상을 옮기는 중이면 영상 테두리와 가이드
@@ -214,6 +218,15 @@ export function Preview(props: Props) {
     if (srcAt(p.project, t, p.video.duration || 0)?.clip.src) return null;   // 이어 붙인 영상 구간엔 PIP 없음
     return pipBox(W, H, p.project);
   };
+  /** 로고 워터마크 (미리보기에 방금 그린 자리) — PIP와 같은 방식으로 옮기기·모서리 크기 */
+  const logoNow = () => { const p = live.current; return p.onLogoPos && !p.viewTrack && !p.cropMode && !p.clean && logoDrawn ? { ...logoDrawn, logo: true } : null; };
+  const logoHit = (x: number, y: number): Mode | null => {
+    const b = logoNow();
+    if (!b) return null;
+    if (Math.hypot(x - (b.x + b.w), y - (b.y + b.h)) < W * 0.035) return 'pipr';
+    if (x >= b.x && x <= b.x + b.w && y >= b.y && y <= b.y + b.h) return 'pip';
+    return null;
+  };
   const pipHit = (x: number, y: number): Mode | null => {
     const b = pipNow();
     if (!b) return null;
@@ -252,6 +265,9 @@ export function Preview(props: Props) {
     const tch = tcHit(x, y);
     if (tch) return tch.mode;
     if (chordCornerHit(x, y)) return 'chordR';   // 코드표 네 모서리: 크기
+    // 로고는 맨 위에 그려지니 자막·PIP·악보 카드보다 먼저
+    const lh = logoHit(x, y);
+    if (lh) return lh;
     const cap = capHit(x, y);
     if (cap) return 'cap';
     // PIP는 악보 카드에 가려져도 잡을 수 있게 카드보다 먼저
@@ -284,7 +300,7 @@ export function Preview(props: Props) {
     if (hitCap) live.current.onSelectCaption(hitCap.id);
     drag.current = { mode: m, sx: x, sy: y, start: { ...live.current.layout }, guides: [],
       cap0: hitCap ? styleFor(live.current.project, live.current.ratio, hitCap) : undefined, capId: hitCap?.id,
-      tcKind: tch?.kind, tcBox: tch?.box, pip0: m === 'pip' || m === 'pipr' ? pipNow() || undefined : undefined,
+      tcKind: tch?.kind, tcBox: tch?.box, pip0: m === 'pip' || m === 'pipr' ? (logoHit(x, y) ? logoNow() : pipNow()) || undefined : undefined,
       xf0: src ? JSON.parse(JSON.stringify(src.xf)) : null, id: src?.id || 'main', vw: src?.vw || 1, vh: src?.vh || 1 };
   };
 
@@ -294,6 +310,7 @@ export function Preview(props: Props) {
     if (!d) {
       const m = hit(x, y);
       hover.current = m === 'video' ? null : m;
+      hoverLogo.current = !!logoHit(x, y);
       e.currentTarget.style.cursor = m ? CURSOR[m] : 'default';
       return;
     }
@@ -337,14 +354,14 @@ export function Preview(props: Props) {
         nx = Math.max(0, Math.min(W - b.w, nx)); ny = Math.max(0, Math.min(H - b.h, ny));
         d.guides = guides;
         const pos = { x: nx / W, y: ny / H, w: b.w / W };
-        if (b.ov) p.onOvPos?.(b.ov, pos); else p.onPip?.(pos);
+        if (b.logo) p.onLogoPos?.({ x: pos.x, y: pos.y }); else if (b.ov) p.onOvPos?.(b.ov, pos); else p.onPip?.(pos);
       } else {
         let nw = b.w + (x - d.sx);
-        nw = Math.max(W * 0.15, Math.min(W - b.x, (H - b.y) / b.ar, nw));
+        nw = Math.max(W * (b.logo ? 0.04 : 0.15), Math.min(W - b.x, (H - b.y) / b.ar, nw));
         if (Math.abs(b.x + nw - (W - mg)) < th) { nw = W - mg - b.x; guides.push({ x: W - mg }); }
         d.guides = guides;
         const pos = { x: b.x / W, y: b.y / H, w: nw / W };
-        if (b.ov) p.onOvPos?.(b.ov, pos); else p.onPip?.(pos);
+        if (b.logo) p.onLogoPos?.({ x: pos.x, y: pos.y }, Math.max(0.04, Math.min(0.6, pos.w))); else if (b.ov) p.onOvPos?.(b.ov, pos); else p.onPip?.(pos);
       }
       return;
     }

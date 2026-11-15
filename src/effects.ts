@@ -123,6 +123,9 @@ export function pipBox(W: number, H: number, p: Project) {
   return { x, y, w, h, ar };
 }
 
+/** 미리보기에 방금 그린 로고 자리 (미리보기에서 로고를 끌어 옮길 때 씀) */
+export let logoDrawn: { x: number; y: number; w: number; h: number; ar: number } | null = null;
+(globalThis as any).__pveLogo = () => logoDrawn;   // 점검용
 /** PIP 영상 자리 (픽셀): 저장된 위치가 없으면 오른쪽 위. 높이는 그 영상 비율대로 (세로 영상은 세로로 길게) */
 export function ovBox(W: number, H: number, o: Overlay, vw?: number, vh?: number) {
   const ratio = ratioOf(W, H);
@@ -476,6 +479,7 @@ function drawClipFade(ctx: CanvasRenderingContext2D, W: number, H: number, t: nu
 
 /** 결과물 한 프레임 */
 export function renderComposite(ctx: CanvasRenderingContext2D, W: number, H: number, t: number, env: Env, opts: { viewTrack?: string | null; beforeCard?: () => void; ghostCard?: boolean; preview?: boolean } = {}) {
+  if (opts.preview) logoDrawn = null;
   const p = env.project, fx = getFx(p);
   const [r0, r1] = env.range;
   ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H);
@@ -529,13 +533,19 @@ export function renderComposite(ctx: CanvasRenderingContext2D, W: number, H: num
   const logo = logoImg(fx.logo);
   if (fx.watermark.on && logo) {
     const w = W * fx.watermark.size, h = w * logo.naturalHeight / logo.naturalWidth, mg = W * 0.04;
-    const top = ratioOf(W, H) === '9:16' ? H * 0.15 : mg;
-    const x = fx.watermark.pos.endsWith('l') ? mg : W - w - mg;
-    let y = fx.watermark.pos.startsWith('t') ? top : H - h - (ratioOf(W, H) === '9:16' ? H * 0.21 : mg);
-    // 악보 카드와 겹치면 카드 바깥(위쪽 로고는 카드 아래, 아래쪽 로고는 카드 위)으로 비켜 감 — 악보를 가리지 않게
-    if (cardR && x < cardR.x + cardR.w && x + w > cardR.x && y < cardR.y + cardR.h && y + h > cardR.y)
-      y = fx.watermark.pos.startsWith('t') ? cardR.y + cardR.h + mg * 0.5 : cardR.y - h - mg * 0.5;
+    const at = fx.watermark.at?.[ratioOf(W, H)];
+    let x: number, y: number;
+    if (at) { x = Math.max(0, Math.min(W - w, at.x * W)); y = Math.max(0, Math.min(H - h, at.y * H)); }   // 미리보기에서 직접 옮긴 자리
+    else {
+      const top = ratioOf(W, H) === '9:16' ? H * 0.15 : mg;
+      x = fx.watermark.pos.endsWith('l') ? mg : W - w - mg;
+      y = fx.watermark.pos.startsWith('t') ? top : H - h - (ratioOf(W, H) === '9:16' ? H * 0.21 : mg);
+      // 악보 카드와 겹치면 카드 바깥(위쪽 로고는 카드 아래, 아래쪽 로고는 카드 위)으로 비켜 감 — 악보를 가리지 않게
+      if (cardR && x < cardR.x + cardR.w && x + w > cardR.x && y < cardR.y + cardR.h && y + h > cardR.y)
+        y = fx.watermark.pos.startsWith('t') ? cardR.y + cardR.h + mg * 0.5 : cardR.y - h - mg * 0.5;
+    }
     ctx.save(); ctx.globalAlpha = fx.watermark.opacity; ctx.drawImage(logo, x, y, w, h); ctx.restore();
+    if (opts.preview) logoDrawn = { x, y, w, h, ar: h / w };
   }
 
   // 5) 인트로 · 엔딩 카드

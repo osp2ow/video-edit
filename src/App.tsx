@@ -2094,6 +2094,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
               <strong>이 컴퓨터의 브라우저가 영상 화면을 재생할 수 없어요</strong>
               <p className="small">{vidErr} · 소리는 읽혀서 박자 분석은 됐지만, 화면 재생·MP4 추출·썸네일은 안 돼요. 아이폰 기본 설정(HEVC·HDR)으로 찍은 영상이 윈도우 PC에서 자주 이래요.</p>
               <ol className="small">
+                <li><b>크롬 그래픽 가속 켜기</b> — 크롬 설정 › 시스템 › '가능한 경우 그래픽 가속 사용'을 켜고 크롬을 다시 시작하면 대부분 바로 열려요.</li>
                 <li><b>맥에서 열기</b> — 학원 맥 미니의 크롬·사파리에서는 대부분 바로 열려요 (클라우드 프로젝트라 그대로 이어서 작업).</li>
                 <li><b>호환 형식으로 바꿔 넣기</b> — 맥 QuickTime으로 열고 파일 › 다음으로 내보내기 › 1080p(또는 4K) › 형식 '더 높은 호환성(H.264)'으로 저장한 뒤, 왼쪽 '연주 영상 1'의 <b>바꾸기</b>로 넣으면 설정은 그대로예요.</li>
                 <li><b>앞으로 찍을 영상</b> — 아이폰 설정 › 카메라 › 포맷 › '높은 호환성', 비디오 녹화 › 'HDR 비디오' 끔.</li>
@@ -2112,6 +2113,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             onChordSize={s => setChordPos({ size: s })}
             onPip={pos => { const pp = { ...(projRef.current.pip || {}) }; if (pos) pp[ratio] = pos; else delete pp[ratio]; setProject({ pip: pp }); }}
             ovEls={ovElsRef.current}
+            onLogoPos={(pos, size) => { const wm = getFx(projRef.current).watermark, at = { ...(wm.at || {}) }; if (pos) at[ratio] = pos; else delete at[ratio]; setFx({ watermark: { ...wm, at, ...(size ? { size } : {}) } }); }}
             onOvPos={(id, pos) => { const ovs = projRef.current.overlays || [], src = ovs.find(o => o.id === id)?.src; setProject({ overlays: ovs.map(o => { if (o.src !== src) return o; const b = { ...(o.box || {}) }; if (pos) b[ratio] = pos; else delete b[ratio]; return { ...o, box: b }; }) }); }} />
           <NeededFiles need={needList} onClose={() => setWant(null)} />
           {remoteEdit && (

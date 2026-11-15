@@ -209,9 +209,10 @@ export function FxPanel({ fx, setFx, selCut, setCutTr, onLogo, hasAudio, selFx, 
               <div className="subbox">
                 <div className="seg small">
                   {([['tl', '↖'], ['tr', '↗'], ['bl', '↙'], ['br', '↘']] as [Fx['watermark']['pos'], string][]).map(([k, n]) => (
-                    <button key={k} type="button" className={fx.watermark.pos === k ? 'on' : ''} onClick={() => setFx({ watermark: { ...fx.watermark, pos: k } })}>{n}</button>
+                    <button key={k} type="button" className={fx.watermark.pos === k && !Object.keys(fx.watermark.at || {}).length ? 'on' : ''} onClick={() => setFx({ watermark: { ...fx.watermark, pos: k, at: {} } })}>{n}</button>
                   ))}
                 </div>
+                <p className="small dim">미리보기에서 로고를 끌어 옮기고, 오른쪽 아래 모서리로 크기를 바꿀 수 있어요 (더블클릭하면 고른 자리로)</p>
                 <Slider id="wm-size" label="크기" value={fx.watermark.size} min={0.06} max={0.35} step={0.01} fmt={pct} onChange={v => setFx({ watermark: { ...fx.watermark, size: v } })} />
                 <Slider id="wm-op" label="불투명도" value={fx.watermark.opacity} min={0.2} max={1} step={0.01} fmt={pct} onChange={v => setFx({ watermark: { ...fx.watermark, opacity: v } })} />
               </div>

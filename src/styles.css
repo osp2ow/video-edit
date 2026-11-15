@@ -440,9 +440,11 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 
 .thumb-modal { width: min(1100px, calc(100vw - 32px)); max-height: calc(100vh - 32px); overflow: auto; }
 .thumb-body { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 18px; padding: 4px 18px 18px; }
-.thumb-view { display: flex; align-items: center; justify-content: center; gap: 14px; background: #0b0a08; border-radius: 10px; padding: 12px; min-height: 360px; }
+.thumb-view { display: flex; align-items: center; justify-content: center; gap: 14px; background: #0b0a08; border-radius: 10px; padding: 12px; min-height: 360px;
+  /* 오른쪽 설정이 길어도 미리보기는 위에 붙어 있게 (예전엔 가운데로 내려가서 노트북 화면에선 아래가 잘렸음) */
+  align-self: start; position: sticky; top: 0; }
 .thumb-item { flex: 1 1 0; min-width: 0; margin: 0; display: grid; justify-items: center; gap: 6px; }
-.thumb-item canvas { max-width: 100%; max-height: min(66vh, 640px); width: auto; height: auto; }
+.thumb-item canvas { max-width: 100%; max-height: min(66vh, calc(100vh - 150px), 640px); width: auto; height: auto; }
 .thumb-item.focus canvas { outline: 2px solid var(--accent); outline-offset: 2px; }
 .thumb-item figcaption { font: 600 12px var(--font); color: var(--muted); }
 .thumb-view canvas { display: block; border-radius: 6px; cursor: grab; touch-action: none; box-shadow: 0 8px 30px rgba(0,0,0,.5); }

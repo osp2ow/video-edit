@@ -1774,7 +1774,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const nudgeSync = (d: number) => setProject({ ...recPatch(Math.round((recAtNow() - d) * 1000) / 1000), syncTouched: true });
 
   return (
-    <div className="app">
+    <div className={`app${ratio !== '16:9' ? ' vert' : ''}${ratio === '4:5' ? ' r45' : ''}${studioOpen || chordOpen ? ' cap-on' : ''}`}>
       <video
         ref={videoRef}
         playsInline

@@ -207,6 +207,19 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .tl-canvas canvas { display: block; cursor: text; touch-action: none; }
 .keys { margin: 0; padding: 6px 16px 10px; font-size: 11px; color: var(--muted); }
 
+/* 세로 영상(9:16·4:5) 편집: 미리보기를 왼쪽 끝에 세로로 길게 두고, 파일 목록·타임라인은 오른쪽으로 밀어냄 (넓은 화면에서만) */
+@media (min-width: 1101px) {
+  .app.vert {
+    --pvw: min(calc((100vh - 150px) * 9 / 16 + 32px), 40vw);
+    grid-template-columns: var(--pvw) minmax(300px, 1fr) 292px;
+    grid-template-areas: "top top top" "center left right" "center bottom bottom";
+  }
+  .app.vert.r45 { --pvw: min(calc((100vh - 150px) * 4 / 5 + 32px), 44vw); }
+  .app.vert.cap-on { grid-template-columns: calc(var(--pvw) + 300px) minmax(300px, 1fr) 292px; }
+  .app.vert .center { border-right: 1px solid var(--line); }
+  .app.vert .panel.left { border-right: 1px solid var(--line); }
+}
+
 @media (max-width: 1100px) {
   .app { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; grid-template-areas: "top" "center" "bottom" "left" "right"; }
   .top { flex-wrap: wrap; }

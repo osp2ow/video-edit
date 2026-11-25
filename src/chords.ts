@@ -1,13 +1,14 @@
 // 기타 코드표 (직접 만들기): 코드 이름 + 줄마다 누르는 프렛을 사용자가 찍음
 // 줄 순서: 6번줄(굵은 줄)부터 1번줄까지. 값: 1 이상 = 그 프렛에 점, 0 = 개방현(O), -1 = 안 침(X), -2 = 아무 표시 없음
 import { voicingsOf, parseChord } from './chordLegacy';
+import type { TabDot } from './tab';
 
 export const MUTE = -1, OPEN_STR = 0, NONE = -2;
 export type Frets = number[];
 /** 그리기용 코드표 */
-export interface Voicing { frets: Frets; base: number; barre: { fret: number; from: number; to: number } | null; span?: number }   // base: 표 첫 칸의 프렛 · span: 칸 수
+export interface Voicing { frets: Frets; base: number; barre: { fret: number; from: number; to: number } | null; span?: number; dots?: TabDot[] }   // base: 표 첫 칸의 프렛 · span: 칸 수
 /** 코드표 데이터 (자막에 들어감 · 내 코드표에 저장) */
-export interface ChordData { name: string; frets?: Frets; base?: number; span?: number; barre?: boolean; v?: number }   // v: 예전 방식(정해진 목록의 운지 번호)
+export interface ChordData { name: string; frets?: Frets; base?: number; span?: number; barre?: boolean; v?: number; dots?: TabDot[] }   // dots: 타브 지판(여러 프렛 점 · on = 지금 치는 음)   // v: 예전 방식(정해진 목록의 운지 번호)
 
 export const blankChord = (): ChordData => ({ name: '', frets: [NONE, NONE, NONE, NONE, NONE, NONE], base: 1, span: 4, barre: true });
 
@@ -27,7 +28,7 @@ export function findBarre(f: Frets): Voicing['barre'] {
 export function chartOf(c: ChordData): Voicing | null {
   if (c.frets) {
     const f = c.frets.slice(0, 6); while (f.length < 6) f.push(NONE);
-    return { frets: f, base: Math.max(1, c.base || 1), barre: c.barre === false ? null : findBarre(f), span: c.span || 4 };
+    return { frets: f, base: Math.max(1, c.base || 1), barre: c.barre === false ? null : findBarre(f), span: c.span || 4, ...(c.dots ? { dots: c.dots } : {}) };
   }
   const pc = parseChord(c.name);
   if (!pc) return null;

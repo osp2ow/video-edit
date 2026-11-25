@@ -1,5 +1,5 @@
 import { shiftProject, recKey, recKeyOf, MAIN_REC, RecClip, trimOf, bpmAt, mainShift, recAtOf, sheetClipsOf, sheetClipEnd, sheetHome, SheetClip, clipEnd, barAt, Project, Ratio, CardLayout, Cut, CutSnap, MAIN, defaultProject, defaultLayouts, barBeat, barStart, barLen, beatLen, fmtTime, angleAt, setCutAt, snapTime, normalizeCuts, sheetStart, sheetEnd, sheetIndex, barOfSheet, VideoXf, getXf, withXf, defaultXf, Caption, CaptionStyle, Fx, getFx, LAYOUT_LABEL, clipsOf, timelineEnd, Clip, RATIOS, RATIO_LABEL, MarkKind, Punch, MARK_AMT, cardSpan, FIRST_PAGE, chordPosOf, ChordPos, meterText, unitBpm, isCompound, feltBpb } from './model';
-import { captionStyleOf, styleFor, CAP_SHARED, ownLook, ownPos } from './render';
+import { captionStyleOf, styleFor, CAP_SHARED, ownLook, ownPos, setTabSource, TAB_ID, tabCaption } from './render';
 import { CaptionStudio } from './CaptionStudio';
 import { ChordPanel } from './ChordPanel';
 import { ChordData, blankChord, editableOf } from './chords';
@@ -134,7 +134,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const [vTrack, setVTrack] = useState<Track | null>(null);
   const [rTrack, setRTrack] = useState<Track | null>(null);
   const [sheet, setSheet] = useState<SheetData | null>(null);
-  (window as any).__pveSheet = () => sheet;   // 점검용 (찾은 마디)
+  (window as any).__pveSheet = () => sheet;
+  useEffect(() => { setTabSource(sheet?.tab, sheet?.bars.length || 0); }, [sheet]);
+  (window as any).__pveTabAt = (t: number) => tabCaption(projRef.current, t);   // 점검용   // 기타 타브 → 지판 (미리보기·추출 둘 다)   // 점검용 (찾은 마디)
   // 두 번째부터 넣은 악보들 (악보 조각의 sheet 이름으로 고름)
   const [extraSheets, setExtraSheets] = useState<SheetData[]>([]);
   const [extraRecs, setExtraRecs] = useState<XRec[]>([]);
@@ -1739,7 +1741,7 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   };
   /** 미리보기에서 자막을 끌어 옮김 — 개별 스타일이 있으면 그 자막만, 아니면 공통 */
   const moveCaption = (id: string, x: number, y: number) => {
-    if ((projRef.current.captions || []).find(c => c.id === id)?.chord) { setChordPos({ x, y }); return; }   // 코드표는 모두 같이
+    if (id === TAB_ID || (projRef.current.captions || []).find(c => c.id === id)?.chord) { setChordPos({ x, y }); return; }   // 코드표(타브 지판 포함)는 모두 같이
     applyCapPatch({ x, y }, id);
   };
 
@@ -1909,6 +1911,12 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
               try { loadSheet(await stitchImages(imgs.sort((a, b) => a.name.localeCompare(b.name, 'ko', { numeric: true })))); }
               catch (e: any) { setMsg({ kind: 'warn', text: e?.message || '이미지를 읽지 못했어요.' }); }
             }} />
+          {!!sheet?.tab?.length && (
+            <label className="tab-row">
+              <input type="checkbox" checked={!fx.tabBoardOff} onChange={e => setFx({ tabBoardOff: !e.target.checked })} />
+              <span><b>기타 지판으로 보여주기</b><span className="dim small"> · 타브에서 음 {sheet.tab.length}개 읽음 · 코드표 자리에 나와요</span></span>
+            </label>
+          )}
           {extraSheets.length > 0 && (
             <div className="src-list">
               {extraSheets.map((x, i) => {

@@ -554,3 +554,6 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 .vid-err strong { display: block; color: #ffb36b; margin-bottom: 6px; font-size: 15px; }
 .vid-err p { margin: 0 0 8px; color: #cfc6bf; line-height: 1.5; word-break: break-all; }
 .vid-err ol { margin: 0; padding-left: 18px; display: flex; flex-direction: column; gap: 6px; line-height: 1.5; }
+/* 기타 타브 → 지판 표시 켜기 */
+.tab-row { display: flex; align-items: flex-start; gap: 8px; margin: -2px 0 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; cursor: pointer; }
+.tab-row input { margin-top: 2px; accent-color: var(--accent); }

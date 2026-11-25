@@ -4,7 +4,7 @@ import { styleFor } from './render';
 import { SheetData } from './sheet';
 import { safeZones } from './render';
 export { safeZones };
-import { cardBox, drawVideo, drawCard, drawCaptions, FONT, videoRect, croppedRect, captionBox, captionStyleOf, activeCaptions, cardMetrics, sheetZoom } from './render';
+import { TAB_ID, cardBox, drawVideo, drawCard, drawCaptions, FONT, videoRect, croppedRect, captionBox, captionStyleOf, activeCaptions, cardMetrics, sheetZoom } from './render';
 import { Angle, activeSource } from './angles';
 import { isExporting } from './exporter';
 import { renderComposite, sheetAt, activeTitleCard, cardSafeRect, clampCardY, CardLayoutResult, pipBox, ovBox, logoDrawn } from './effects';
@@ -103,6 +103,7 @@ export function Preview(props: Props) {
     }
     const c = capHit(x, y);
     if (!c) return;
+    if (c.id === TAB_ID) return;   // 타브 지판은 고칠 게 없음 (끌어서 옮기기·모서리로 크기만)
     if (c.chord) { live.current.onEditChord?.(c.id); return; }   // 코드표는 글자 고치기 대신 코드표 패널
     live.current.onPause?.();
     const st = styleFor(live.current.project, live.current.ratio, c);

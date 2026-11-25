@@ -1,4 +1,5 @@
 // 악보 불러오기 + 줄(시스템)·마디선 자동 검출
+import { pageGlyphs, tabNotes, Glyph, TabNote, TabSys } from './tab';
 declare const pdfjsLib: any;
 export const PDF_WORKER_URL = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
 
@@ -11,7 +12,7 @@ export interface SheetSystem {
   staffH?: number;
 }
 export interface SheetBar { sys: number; x0: number; x1: number; rest: boolean }
-export interface SheetData { name: string; systems: SheetSystem[]; bars: SheetBar[] }
+export interface SheetData { name: string; systems: SheetSystem[]; bars: SheetBar[]; tab?: TabNote[] }   // tab: 기타 타브 PDF에서 읽은 음 (지판 표시용)
 
 const TARGET_W = 1650;
 
@@ -49,6 +50,8 @@ export async function fileToPages(file: File): Promise<HTMLCanvasElement[]> {
       const ctx = c.getContext('2d')!;
       ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, c.width, c.height);
       await page.render({ canvasContext: ctx, viewport: vp }).promise;
+      // 기타 타브: 페이지 안 글자(프렛 숫자) 자리도 같이 읽어 둠
+      try { (c as any).__glyphs = await pageGlyphs(page, vp); } catch (e) { console.warn('[타브] 글자 읽기 실패', e); }
       pages.push(c);
     }
   } else {
@@ -250,6 +253,7 @@ export function detectSheet(pages: HTMLCanvasElement[], name: string): SheetData
   let lastUnder = -1;
   const systems: SheetSystem[] = [];
   const bars: SheetBar[] = [];
+  const tabSys: TabSys[] = [];
   pages.forEach((page, pi) => {
     const W = page.width, H = page.height;
     const data = page.getContext('2d')!.getImageData(0, 0, W, H).data;
@@ -415,6 +419,7 @@ export function detectSheet(pages: HTMLCanvasElement[], name: string): SheetData
       const xs = [left, ...s.bars.filter(x => x > left + s.sp)].map(x => x - cx0);   // 음자리표·박자표 세로획은 마디선이 아님
       const sysIdx = systems.length;
       systems.push({ canvas: c, barXs: xs, firstBar: bars.length + 1, page: pi, staffY: s.top - cy0, staffH: s.bot - s.top });
+      tabSys.push({ page: pi, ox: cx0, oy: cy0, staffY: s.top - cy0, staffH: s.bot - s.top, lines: Math.round((s.bot - s.top) / s.sp) + 1, barXs: xs, firstBar: bars.length + 1, left: xs[0] });
       // 마디별 잉크 양 → 쉼표만 있는 마디 찾기
       for (let b = 0; b < xs.length - 1; b++) {
         const xa = Math.round(xs[b] + cx0 + 3), xb = Math.round(xs[b + 1] + cx0 - 3);
@@ -428,7 +433,10 @@ export function detectSheet(pages: HTMLCanvasElement[], name: string): SheetData
   const inks = bars.map((b: any) => b.ink).sort((a, b) => a - b);
   const med = inks[Math.floor(inks.length / 2)] || 1;
   bars.forEach((b: any) => { b.rest = b.ink < med * 0.45; delete b.ink; });
-  return { name, systems, bars };
+  const glyphs: Glyph[][] = pages.map(pg => (pg as any).__glyphs || []);
+  const tab = glyphs.some(g => g.length) ? tabNotes(glyphs, tabSys) : [];
+  if (tab.length) console.info(`[타브] 음 ${tab.length}개 읽음`);
+  return { name, systems, bars, ...(tab.length ? { tab } : {}) };
 }
 
 /** 악보 맨 앞에 이어지는 쉼표 마디 수 */

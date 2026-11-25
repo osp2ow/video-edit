@@ -1,6 +1,7 @@
 // 프레임 렌더러 — 미리보기와 (다음 단계의) MP4 추출이 같은 함수를 쓴다.
 import { CardLayout, Project, VideoXf, Caption, CaptionStyle, Ratio, sheetPos, getXf, defaultXf, normCaptionStyle, barStart, barLen, ratioOfWH, RATIOS, getFx, bpmAt, chordPosOf } from './model';
-import { chartOf, Voicing } from './chords';
+import { chartOf, Voicing, NONE } from './chords';
+import { tabViewAt, TabNote } from './tab';
 import { SheetData } from './sheet';
 
 export const FONT = '"IBM Plex Sans KR", "Apple SD Gothic Neo", "Malgun Gothic", "Segoe UI Symbol", "Apple Symbols", sans-serif';
@@ -382,11 +383,11 @@ export function chordGeom(W: number, H: number, st: { x: number; y: number; size
   const fr = v ? v.frets.filter(x => x > 0) : [];
   const nFret = Math.max(v?.span || 4, v && fr.length ? Math.max(...fr) - v.base + 1 : 4);
   const nameFs = gh * 0.46, gap = gh * 0.16, xoW = gh * 0.17;
-  const nameW = Math.max(gh * 0.4, measureName(name, nameFs));
+  const nameW = name ? Math.max(gh * 0.4, measureName(name, nameFs)) : 0;   // 이름 없는 표(타브 지판)는 이름 칸 없이
   const footH = v && v.base > 1 ? gh * 0.22 : gh * 0.06;
-  const w = nameW + gap + xoW + gw, h = gh + footH + gh * 0.06;
+  const w = (name ? nameW + gap : 0) + xoW + gw, h = gh + footH + gh * 0.06;
   const x = st.x * W - w / 2, y = st.y * H - h / 2;
-  return { x, y, w, h, gx: x + nameW + gap + xoW, gy: y + gh * 0.06, gw, gh, nFret, nameFs, nameW, xoW };
+  return { x, y, w, h, gx: x + (name ? nameW + gap : 0) + xoW, gy: y + gh * 0.06, gw, gh, nFret, nameFs, nameW, xoW };
 }
 let measureCtx: CanvasRenderingContext2D | null = null;
 function measureName(name: string, fs: number) {
@@ -429,6 +430,20 @@ export function paintChord(ctx: CanvasRenderingContext2D, W: number, H: number, 
       ctx.lineWidth = lw * 0.9;
       if (f === 0) { ctx.beginPath(); ctx.arc(mx, my, m, 0, Math.PI * 2); ctx.stroke(); }
       else if (f === -1) { ctx.beginPath(); ctx.moveTo(mx - m, my - m); ctx.lineTo(mx + m, my + m); ctx.moveTo(mx + m, my - m); ctx.lineTo(mx - m, my + m); ctx.stroke(); }
+    }
+    // 타브 지판: 그 구간 음들은 테두리 점(스케일 모양), 지금 치는 음은 꽉 찬 점
+    for (const d of v.dots || []) {
+      const y = rowY(d.s);
+      if (d.f === 0) {   // 개방현: 줄받침 왼쪽 O
+        const mx = g.gx - g.xoW * 0.55, m = rowGap * 0.3;
+        ctx.lineWidth = lw * 1.1; ctx.beginPath(); ctx.arc(mx, y, m, 0, Math.PI * 2);
+        if (d.on) ctx.fill(); else { ctx.globalAlpha = 0.75; ctx.stroke(); ctx.globalAlpha = 1; }
+        continue;
+      }
+      if (d.f < v.base || d.f >= v.base + g.nFret) continue;
+      ctx.beginPath(); ctx.arc(cx(d.f), y, d.on ? r * 1.08 : r * 0.86, 0, Math.PI * 2);
+      if (d.on) ctx.fill();
+      else { ctx.save(); ctx.shadowBlur = 0; ctx.globalAlpha = 0.8; ctx.lineWidth = lw * 1.3; ctx.stroke(); ctx.restore(); }
     }
     // 몇 번 프렛부터인지
     if (v.base > 1) { ctx.font = `700 ${g.gh * 0.17}px ${FONT}`; ctx.textAlign = 'center'; ctx.textBaseline = 'top'; ctx.fillText(`${v.base}fr`, g.gx + cell / 2, g.gy + g.gh + g.gh * 0.05); }
@@ -477,7 +492,26 @@ export function captionBox(ctx: CanvasRenderingContext2D, W: number, H: number, 
 }
 
 export function activeCaptions(p: Project, t: number) {
-  return (p.captions || []).filter(c => t >= c.start && t < c.end && c.text.trim());
+  const list = (p.captions || []).filter(c => t >= c.start && t < c.end && c.text.trim());
+  // 기타 타브 지판: 코드표 자리에 (그 시간에 코드표가 없을 때만)
+  if (tabSrc && !getFx(p).tabBoardOff && !list.some(c => c.chord)) { const tc = tabCaption(p, t); if (tc) list.push(tc); }
+  return list;
+}
+
+// ---------- 기타 타브 → 지판 ----------
+export const TAB_ID = '__tab';
+let tabSrc: { notes: TabNote[]; nBars: number } | null = null;
+/** 악보를 바꿀 때 불러옴 (타브 음이 없으면 null) */
+export function setTabSource(notes: TabNote[] | null | undefined, nBars: number) { tabSrc = notes && notes.length ? { notes, nBars } : null; }
+export const hasTab = () => !!tabSrc;
+/** t에서 보여줄 지판을 코드표 자막 모양으로 (위치·크기는 코드표와 같이) */
+export function tabCaption(p: Project, t: number): Caption | null {
+  if (!tabSrc) return null;
+  const sp = sheetPos(p, t, tabSrc.nBars);
+  if (sp.idx < 0 || sp.idx >= tabSrc.nBars) return null;
+  const v = tabViewAt(tabSrc.notes, sp.idx, sp.frac);
+  if (!v) return null;
+  return { id: TAB_ID, start: t - 1, end: t + 1, text: ' ', chord: { name: '', frets: [NONE, NONE, NONE, NONE, NONE, NONE], base: v.base, span: v.span, barre: false, dots: v.dots } };
 }
 
 const hexA = (hex: string, a: number) => {

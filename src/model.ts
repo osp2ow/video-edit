@@ -237,6 +237,7 @@ export interface Fx {
   sheetBold: boolean;                                                    // 음표 진하게
   colorMatch: { on: boolean; m: Record<string, number[]> };              // 앵글 색 맞추기: 앵글별 [r,g,b 배율, r,g,b 더하기]
   filterOn?: boolean; zoomOn?: boolean; marksOn?: boolean;
+  tabBoardOff?: boolean;                                                 // 기타 타브 → 지판 표시 끄기 (타브 PDF를 읽었을 때만 의미)
   sheetHidden?: boolean;                                                 // 악보 카드 숨기기 (영상·미리보기 모두)                // 효과 켜고 끄기 (없으면 켜짐 · 설정값은 그대로 두고 잠깐 끄기)
 }
 export const NEUTRAL_FILTER: ColorFilter = { brightness: 1, contrast: 1, saturate: 1, sepia: 0, hue: 0 };

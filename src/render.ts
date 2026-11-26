@@ -222,6 +222,14 @@ export function drawVideo(ctx: CanvasRenderingContext2D, W: number, H: number, v
   const vw = video.videoWidth, vh = video.videoHeight, c = xf.crop;
   const d = croppedRect(W, H, vw, vh, xf);
   if (d.w <= 1 || d.h <= 1) return;
+  if (xf.bg === 'blur') {
+    // 빈 곳: 같은 장면을 화면 가득 키워 흐리고 어둡게 (세로 화면에 가로 영상을 덜 확대해 넣을 때)
+    const s = Math.max(W / vw, H / vh) * 1.08, bw = vw * s, bh = vh * s;
+    const prev = ctx.filter;
+    ctx.filter = `${prev && prev !== 'none' ? prev + ' ' : ''}blur(${Math.round(W * 0.035)}px) brightness(0.55)`;
+    ctx.drawImage(video, (W - bw) / 2, (H - bh) / 2, bw, bh);
+    ctx.filter = prev;
+  }
   const rot = xf.rot || 0;
   if (Math.abs(rot) < 0.01) { ctx.drawImage(video, c.l * vw, c.t * vh, vw * (1 - c.l - c.r), vh * (1 - c.t - c.b), d.x, d.y, d.w, d.h); return; }
   // 수평 맞추기: 보이는 사각형 가운데를 중심으로 돌림. 빈 모서리 채우기면 그 사각형을 꽉 채우게 확대하고 바깥은 잘라냄

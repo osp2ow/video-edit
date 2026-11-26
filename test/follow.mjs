@@ -69,4 +69,17 @@ await centerX(7); const s1 = await span();
 await page.locator('#follow-zoom').fill('3'); await page.waitForTimeout(300); await centerX(7.01); const s3 = await span();
 console.log('vertical span zoom1.6 vs 3', s1.toFixed(3), s3.toFixed(3));
 ok('zoom slider zooms in', s3 < s1 * 0.7);
+// 덜 확대(1배 미만): 슬라이더 왼쪽 끝 = 영상 폭 전체 · 위아래 빈 곳은 검정 대신 흐린 배경 · 중간 값이면 손 쪽으로 따라감
+const minZ = await page.locator('#follow-zoom').getAttribute('min');
+console.log('min zoom', minZ);
+ok('slider goes below 1x for a wide video in 9:16', +minZ < 0.4);
+const hspan = () => page.evaluate(() => { const c = document.querySelector('canvas.stage'), x = c.getContext('2d'); const W = c.width, H = c.height; const a = x.getImageData(2, H >> 1, 1, 1).data[0], b = x.getImageData(W - 3, H >> 1, 1, 1).data[0]; const top = x.getImageData(W >> 1, Math.round(H * 0.08), 1, 1).data; return { span: (b - a) / 255, top: [...top].slice(0, 3) }; });
+await page.locator('#follow-zoom').fill(String(+minZ)); await page.waitForTimeout(300); await centerX(7.02);
+const z0 = await hspan(); console.log('min zoom view', JSON.stringify(z0));
+ok('min zoom shows the whole width', z0.span > 0.9);
+ok('empty top is filled (blurred picture, not black)', z0.top.some(v => v > 25));
+await page.locator('#follow-zoom').fill('0.6'); await page.waitForTimeout(300);
+const c6 = await centerX(7.03), h6 = await hspan(); console.log('zoom 0.6', JSON.stringify(c6), JSON.stringify(h6));
+ok('at 0.6x it still pans toward the hand (center right of middle)', c6.r > 0.55 && h6.span > 0.45 && h6.span < 0.75);
+if (OUT) await page.locator('canvas.stage').screenshot({ path: OUT + '/follow_z06.png' });
 console.log(logs.join('\n')); await browser.close();

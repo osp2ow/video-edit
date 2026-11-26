@@ -30,7 +30,7 @@ export function pickHand(f: Follow): 0 | 1 {
 
 /** 보이는 화면이 영상의 몇 분의 몇인지 (가로, 세로) — 화면을 꽉 채운 뒤 zoom배 */
 function visible(va: number, ca: number, zoom: number) {
-  return { w: Math.min(1, ca / va) / zoom, h: Math.min(1, va / ca) / zoom };
+  return { w: Math.min(1, Math.min(1, ca / va) / zoom), h: Math.min(1, Math.min(1, va / ca) / zoom) };
 }
 
 const cache = new Map<string, { x: Float32Array; y: Float32Array; step: number }>();
@@ -75,6 +75,9 @@ export function followPath(f: Follow, va: number, ca: number) {
   return out;
 }
 
+/** 덜 확대할 수 있는 한계: 영상 전체 폭(또는 높이)이 다 보일 때의 배율 (꽉 채움 = 1 기준) */
+export const minFollowZoom = (va: number, ca: number) => Math.min(1, Math.max(0.2, Math.min(ca / va, va / ca)));
+
 /** 영상 시간 s의 카메라 가운데 (영상 기준 0~1) */
 export function followCenter(f: Follow, s: number, va: number, ca: number) {
   const P = followPath(f, va, ca), n = P.x.length;
@@ -92,10 +95,14 @@ export function followXf(p: Project, id: string, xf: VideoXf, s: number, vw: num
   // render.videoRect와 같은 기준 배율 → 꽉 채우는 배율 × zoom
   const cover0 = Math.abs(va - ca) / ca < 0.08 || (ca > 0.7 && ca < 0.9 && va < 1);
   const base = cover0 ? Math.max(W / vw, H / vh) : Math.min(W / vw, H / vh);
-  const k = (Math.max(W / vw, H / vh) / base) * Math.max(1, f.zoom);
+  // zoom 1 = 화면을 꽉 채움 · 1보다 작으면 덜 확대(가로 영상을 세로 화면에 넣으면 위아래가 비어서 흐린 배경으로 채움) — 영상 전체가 다 보이는 것보다 작게는 안 함
+  const cover = Math.max(W / vw, H / vh), contain = Math.min(W / vw, H / vh);
+  const k = Math.max(contain, cover * Math.max(0.2, f.zoom)) / base;
   const w = vw * base * k, h = vh * base * k;
-  const rx = Math.max(W - w, Math.min(0, W / 2 - c.x * w)), ry = Math.max(H - h, Math.min(0, H / 2 - c.y * h));
-  return { ...xf, scale: k, x: (rx - (W - w) / 2) / W, y: (ry - (H - h) / 2) / H, crop: { l: 0, t: 0, r: 0, b: 0 } };
+  // 화면보다 넓으면 손을 따라 좌우로(가장자리 안 넘게), 좁으면 가운데 — 세로도 같게
+  const rx = w > W ? Math.max(W - w, Math.min(0, W / 2 - c.x * w)) : (W - w) / 2;
+  const ry = h > H ? Math.max(H - h, Math.min(0, H / 2 - c.y * h)) : (H - h) / 2;
+  return { ...xf, scale: k, x: (rx - (W - w) / 2) / W, y: (ry - (H - h) / 2) / H, crop: { l: 0, t: 0, r: 0, b: 0 }, bg: w < W - 1 || h < H - 1 ? 'blur' : undefined };
 }
 
 /** 미리보기·추출에서 쓸 영상 시간: 기준 영상·추가 영상은 그 조각의 영상 시간, 앵글은 앵글 맞춤만큼 더함 */

@@ -1,5 +1,5 @@
 import { shiftProject, recKey, recKeyOf, MAIN_REC, RecClip, trimOf, bpmAt, mainShift, recAtOf, sheetClipsOf, sheetClipEnd, sheetHome, SheetClip, clipEnd, barAt, Project, Ratio, CardLayout, Cut, CutSnap, MAIN, defaultProject, defaultLayouts, barBeat, barStart, barLen, beatLen, fmtTime, angleAt, setCutAt, snapTime, normalizeCuts, sheetStart, sheetEnd, sheetIndex, barOfSheet, VideoXf, getXf, withXf, defaultXf, Caption, CaptionStyle, Fx, getFx, LAYOUT_LABEL, clipsOf, timelineEnd, Clip, RATIOS, RATIO_LABEL, MarkKind, Punch, MARK_AMT, cardSpan, FIRST_PAGE, chordPosOf, ChordPos, meterText, unitBpm, isCompound, feltBpb } from './model';
-import { followOf, defaultFollow, pickHand, Follow } from './follow';
+import { followOf, defaultFollow, pickHand, Follow, minFollowZoom } from './follow';
 import { trackHands } from './handtrack';
 import { captionStyleOf, styleFor, CAP_SHARED, ownLook, ownPos, setTabSource, TAB_ID, tabCaption } from './render';
 import { CaptionStudio } from './CaptionStudio';
@@ -1531,6 +1531,11 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const curSrcName = sources.find(x => x.id === curSrcId)?.name;
   // 손 따라가기 (자동 짐벌): 지금 고른 영상의 설정·분석
   const curFollow = followOf(project, curSrcId);
+  const followMinZoom = (() => {   // 덜 확대할 수 있는 한계 (영상 가로세로 비율 · 화면 비율에 따라)
+    const el = curSrcId === MAIN ? videoRef.current : angles.find(a => a.id === curSrcId)?.video || srcMap.get(curSrcId);
+    const [rw, rh] = ratio.split(':').map(Number);
+    return el?.videoWidth ? minFollowZoom(el.videoWidth / el.videoHeight, rw / rh) : 1;
+  })();
   const setCurFollow = (patch: Partial<Follow>) => {
     const p = projRef.current, f = followOf(p, curSrcId); if (!f) return;
     setProject({ follow: { ...(p.follow || {}), [curSrcId]: { ...f, ...patch } } });
@@ -2261,8 +2266,9 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
               <button type="button" className="btn sm accent" disabled={!hasVideo} onClick={startFollow}>이 영상에서 손 찾기</button>
             </>) : (<>
               <div className="field">
-                <label htmlFor="follow-zoom">확대 <span className="mono dim">{curFollow.zoom.toFixed(1)}배</span></label>
-                <input id="follow-zoom" type="range" min="1" max="3" step="0.1" value={curFollow.zoom} onChange={e => setCurFollow({ zoom: parseFloat(e.target.value) })} />
+                <label htmlFor="follow-zoom">확대 <span className="mono dim">{curFollow.zoom.toFixed(2)}배{curFollow.zoom < 0.999 ? ' · 빈 곳은 흐린 배경' : ''}</span></label>
+                <input id="follow-zoom" type="range" min={(Math.floor(followMinZoom * 20) / 20).toFixed(2)} max="3" step="0.05" value={curFollow.zoom} onChange={e => setCurFollow({ zoom: parseFloat(e.target.value) })} />
+                <span className="small dim">1배 = {RATIO_LABEL[ratio]} 화면을 꽉 채움 · 왼쪽 끝 = 영상 {ratio === '16:9' ? '높이' : '폭'} 전체가 보임</span>
               </div>
               <div className="field">
                 <label htmlFor="follow-smooth">따라가는 속도 <span className="mono dim">{curFollow.smooth <= 0.3 ? '빠르게' : curFollow.smooth >= 0.8 ? '느긋하게' : '보통'}</span></label>

@@ -215,13 +215,21 @@ export function croppedRect(W: number, H: number, vw: number, vh: number, xf: Vi
   return { x: r.x + c.l * r.w, y: r.y + c.t * r.h, w: r.w * (1 - c.l - c.r), h: r.h * (1 - c.t - c.b), full: r };
 }
 
-export function drawVideo(ctx: CanvasRenderingContext2D, W: number, H: number, video: HTMLVideoElement | null, xf: VideoXf = defaultXf()) {
-  ctx.fillStyle = '#000';
-  ctx.fillRect(0, 0, W, H);
+export function drawVideo(ctx: CanvasRenderingContext2D, W: number, H: number, video: HTMLVideoElement | null, xf: VideoXf = defaultXf(), inner = false) {
+  if (!inner) { ctx.fillStyle = '#000'; ctx.fillRect(0, 0, W, H); }
   if (!video || !video.videoWidth) return;
   const vw = video.videoWidth, vh = video.videoHeight, c = xf.crop;
   const d = croppedRect(W, H, vw, vh, xf);
   if (d.w <= 1 || d.h <= 1) return;
+  // 좌우·상하 반전: 영상 사각형 가운데를 기준으로 뒤집어서 그림 (위치·크기·자르기는 그대로)
+  if (xf.flipX || xf.flipY) {
+    const f = d.full, cx = f.x + f.w / 2, cy = f.y + f.h / 2;
+    ctx.save();
+    ctx.translate(cx, cy); ctx.scale(xf.flipX ? -1 : 1, xf.flipY ? -1 : 1); ctx.translate(-cx, -cy);
+    drawVideo(ctx, W, H, video, { ...xf, flipX: false, flipY: false, crop: xf.flipX || xf.flipY ? { l: xf.flipX ? c.r : c.l, r: xf.flipX ? c.l : c.r, t: xf.flipY ? c.b : c.t, b: xf.flipY ? c.t : c.b } : c }, true);
+    ctx.restore();
+    return;
+  }
   if (xf.bg === 'blur') {
     // 빈 곳: 같은 장면을 화면 가득 키워 흐리고 어둡게 (세로 화면에 가로 영상을 덜 확대해 넣을 때)
     const s = Math.max(W / vw, H / vh) * 1.08, bw = vw * s, bh = vh * s;
@@ -388,7 +396,9 @@ export const styleFor = (p: Project, ratio: Ratio, c: Caption): CaptionStyle => 
 
 // ---------- 기타 코드표 ----------
 /** 코드표 배치 (화면 px): 왼쪽에 코드 이름, 오른쪽에 가로 코드표 (위 = 1번줄, 왼쪽 = 줄받침) */
-export function chordGeom(W: number, H: number, st: { x: number; y: number; size: number }, v: Voicing | null, name: string) {
+/** 코드표 자리. 영상 위(기본)는 코드 이름 길이·'n fr' 표시와 상관없이 지판 칸이 늘 같은 자리에 오게(이름은 그 왼쪽으로 늘어남).
+ *  centerBox = 이름까지 합친 전체를 가운데에 (코드표 편집 칸의 작은 그림용) */
+export function chordGeom(W: number, H: number, st: { x: number; y: number; size: number }, v: Voicing | null, name: string, centerBox = false) {
   const base = Math.min(W, H);
   const gw = base * 0.42 * st.size, gh = gw * 0.62;          // 코드표 칸 (4프렛 × 5칸)
   const fr = v ? v.frets.filter(x => x > 0) : [];
@@ -397,8 +407,15 @@ export function chordGeom(W: number, H: number, st: { x: number; y: number; size
   const nameW = name ? Math.max(gh * 0.4, measureName(name, nameFs)) : 0;   // 이름 없는 표(타브 지판)는 이름 칸 없이
   const footH = v && v.base > 1 ? gh * 0.22 : gh * 0.06;
   const w = (name ? nameW + gap : 0) + xoW + gw, h = gh + footH + gh * 0.06;
-  const x = st.x * W - w / 2, y = st.y * H - h / 2;
-  return { x, y, w, h, gx: x + (name ? nameW + gap : 0) + xoW, gy: y + gh * 0.06, gw, gh, nFret, nameFs, nameW, xoW };
+  if (centerBox) { const x = st.x * W - w / 2, y = st.y * H - h / 2; return { x, y, w, h, gx: x + (name ? nameW + gap : 0) + xoW, gy: y + gh * 0.06, gw, gh, nFret, nameFs, nameW, xoW, gap }; }
+  // 기준 모양(이름 칸 고정 폭 · 'n fr' 칸 포함)으로 자리를 잡고 → 지판 칸 위치는 그대로, 실제 이름 폭만큼 왼쪽으로
+  const refW = gh * 1.25 + gap + xoW + gw, refH = gh + gh * 0.22 + gh * 0.06;
+  const gx = st.x * W - refW / 2 + gh * 1.25 + gap + xoW, y = st.y * H - refH / 2;
+  // 이름이 길어서 화면 왼쪽 밖으로 나가면 글자만 줄임 (지판 자리는 그대로)
+  const room = gx - xoW - gap - W * 0.03;
+  const k = name && nameW > room && room > gh * 0.4 ? room / nameW : 1;
+  const nW = nameW * k, x = gx - xoW - (name ? nW + gap : 0);
+  return { x, y, w: gx + gw - x, h, gx, gy: y + gh * 0.06, gw, gh, nFret, nameFs: nameFs * k, nameW: nW, xoW, gap };
 }
 let measureCtx: CanvasRenderingContext2D | null = null;
 function measureName(name: string, fs: number) {
@@ -408,16 +425,16 @@ function measureName(name: string, fs: number) {
 }
 export const chordVoicing = (c: Caption): Voicing | null => c.chord ? chartOf(c.chord) : null;
 /** 코드표 그리기 (투명 배경, 흰 선·점, 은은한 그림자로 밝은 화면에서도 보이게) */
-export function paintChord(ctx: CanvasRenderingContext2D, W: number, H: number, st: { x: number; y: number; size: number }, name: string, v: Voicing | null) {
-  const g = chordGeom(W, H, st, v, name);
+export function paintChord(ctx: CanvasRenderingContext2D, W: number, H: number, st: { x: number; y: number; size: number }, name: string, v: Voicing | null, centerBox = false) {
+  const g = chordGeom(W, H, st, v, name, centerBox);
   const rowGap = g.gh / 5, cell = g.gw / g.nFret, lw = Math.max(2, g.gw * 0.012);
   const rowY = (s: number) => g.gy + (5 - s) * rowGap;   // s: 0 = 6번줄(맨 아래) … 5 = 1번줄(맨 위)
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.55)'; ctx.shadowBlur = g.gw * 0.025; ctx.shadowOffsetY = g.gw * 0.004;
   ctx.fillStyle = '#fff'; ctx.strokeStyle = '#fff'; ctx.lineCap = 'butt';
   // 코드 이름
-  ctx.font = `800 ${g.nameFs}px ${FONT}`; ctx.textAlign = 'left'; ctx.textBaseline = 'middle';
-  ctx.fillText(name, g.x, g.gy + g.gh / 2);
+  ctx.font = `800 ${g.nameFs}px ${FONT}`; ctx.textAlign = 'right'; ctx.textBaseline = 'middle';
+  ctx.fillText(name, g.gx - g.xoW - g.gap, g.gy + g.gh / 2);   // 지판 바로 왼쪽에 붙여서 (이름이 길면 왼쪽으로 늘어남)
   // 줄 (가로선 6개) · 프렛 (세로선)
   ctx.lineWidth = lw;
   ctx.beginPath();

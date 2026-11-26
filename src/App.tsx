@@ -2245,6 +2245,10 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             </label>
           </div>
           <div className="row">
+            <button type="button" className={`btn sm ${curXf.flipX ? 'accent' : ''}`} aria-pressed={!!curXf.flipX} disabled={!hasVideo} onClick={() => setCurXf({ ...curXf, flipX: !curXf.flipX })} title="거울처럼 좌우를 뒤집어요 (셀카 화면을 원래대로 돌릴 때 등)">⇋ 좌우 반전</button>
+            <button type="button" className={`btn sm ${curXf.flipY ? 'accent' : ''}`} aria-pressed={!!curXf.flipY} disabled={!hasVideo} onClick={() => setCurXf({ ...curXf, flipY: !curXf.flipY })} title="위아래를 뒤집어요">⇅ 상하 반전</button>
+          </div>
+          <div className="row">
             <button type="button" className={`btn sm ${cropMode ? 'accent' : ''}`} disabled={!hasVideo} onClick={() => setCropMode(m => !m)}>{cropMode ? '자르기 완료' : '자르기'}</button>
             <button type="button" className="btn ghost sm" disabled={!hasVideo || (curXf.crop.l + curXf.crop.t + curXf.crop.r + curXf.crop.b === 0)}
               onClick={() => setCurXf({ ...curXf, crop: { l: 0, t: 0, r: 0, b: 0 } })}>자르기 취소</button>

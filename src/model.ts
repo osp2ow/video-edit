@@ -269,7 +269,7 @@ export const getFx = (p: Project): Fx => {
 export type CutSnap = 'bar' | 'beat' | 'off';
 
 /** 영상 화면 배치: 위치(x,y: 캔버스 크기 대비), 크기 배율, 자르기(원본 대비 0~1) */
-export interface VideoXf { x: number; y: number; scale: number; crop: { l: number; t: number; r: number; b: number }; rot?: number; rotFill?: boolean; bg?: 'blur' }   // bg: 영상이 화면을 다 못 채울 때 빈 곳을 같은 영상의 흐린 확대본으로 (손 따라가기에서 덜 확대할 때)   // rot: 수평 맞추기 회전(도) · rotFill: 돌려서 생긴 빈 모서리가 안 보이게 자동 확대 (기본 켜짐)
+export interface VideoXf { x: number; y: number; scale: number; crop: { l: number; t: number; r: number; b: number }; rot?: number; rotFill?: boolean; bg?: 'blur'; flipX?: boolean; flipY?: boolean }   // flipX/flipY: 좌우·상하 반전 · bg: 영상이 화면을 다 못 채울 때 빈 곳을 같은 영상의 흐린 확대본으로 (손 따라가기에서 덜 확대할 때)   // rot: 수평 맞추기 회전(도) · rotFill: 돌려서 생긴 빈 모서리가 안 보이게 자동 확대 (기본 켜짐)
 export const defaultXf = (): VideoXf => ({ x: 0, y: 0, scale: 1, crop: { l: 0, t: 0, r: 0, b: 0 } });
 
 export type CaptionAnim = 'none' | 'fade' | 'pop' | 'up' | 'type';

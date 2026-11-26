@@ -91,7 +91,8 @@ export function followXf(p: Project, id: string, xf: VideoXf, s: number, vw: num
   const f = followOf(p, id);
   if (!f || !f.on || !f.tr?.[0]?.length || !vw || !vh) return xf;
   const va = vw / vh, ca = W / H;
-  const c = followCenter(f, s, va, ca);
+  const c0 = followCenter(f, s, va, ca);
+  const c = { x: xf.flipX ? 1 - c0.x : c0.x, y: xf.flipY ? 1 - c0.y : c0.y };   // 반전한 영상이면 손 위치도 뒤집어서
   // render.videoRect와 같은 기준 배율 → 꽉 채우는 배율 × zoom
   const cover0 = Math.abs(va - ca) / ca < 0.08 || (ca > 0.7 && ca < 0.9 && va < 1);
   const base = cover0 ? Math.max(W / vw, H / vh) : Math.min(W / vw, H / vh);

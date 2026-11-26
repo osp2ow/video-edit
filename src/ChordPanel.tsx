@@ -16,8 +16,8 @@ function Thumb({ data, w = 118, h = 66 }: { data: ChordData; w?: number; h?: num
     const ctx = c.getContext('2d')!;
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    const v = chartOf(data), g = chordGeom(w, h, { x: 0.5, y: 0.5, size: 1 }, v, data.name);
-    paintChord(ctx, w, h, { x: 0.5, y: 0.5, size: Math.min(w * 0.92 / g.w, h * 0.86 / g.h) }, data.name, v);
+    const v = chartOf(data), g = chordGeom(w, h, { x: 0.5, y: 0.5, size: 1 }, v, data.name, true);
+    paintChord(ctx, w, h, { x: 0.5, y: 0.5, size: Math.min(w * 0.92 / g.w, h * 0.86 / g.h) }, data.name, v, true);
   }, [key, w, h]);
   return <canvas ref={ref} className="chord-thumb" style={{ width: w, height: h }} aria-hidden="true" />;
 }
@@ -28,9 +28,9 @@ function ChordEditor({ data, onChange }: { data: ChordData; onChange: (d: ChordD
   const [hover, setHover] = useState<{ s: number; f: number } | null>(null);   // f: 0 = 줄 왼쪽(X/O) 칸, 1 이상 = 표 칸 번호
   const W = 272, H = 168;
   const geom = () => {
-    const v = chartOf(data)!, g0 = chordGeom(W, H, { x: 0.5, y: 0.5, size: 1 }, v, '');
+    const v = chartOf(data)!, g0 = chordGeom(W, H, { x: 0.5, y: 0.5, size: 1 }, v, '', true);
     const size = Math.min(W * 0.94 / g0.w, H * 0.86 / g0.h);
-    return { v, size, g: chordGeom(W, H, { x: 0.5, y: 0.5, size }, v, '') };
+    return { v, size, g: chordGeom(W, H, { x: 0.5, y: 0.5, size }, v, '', true) };
   };
   useEffect(() => {
     const c = ref.current; if (!c) return;
@@ -46,7 +46,7 @@ function ChordEditor({ data, onChange }: { data: ChordData; onChange: (d: ChordD
       const x = hover.f === 0 ? g.gx - g.xoW * 0.55 : g.gx + (hover.f - 0.5) * cell;
       ctx.fillStyle = 'rgba(143,220,164,0.35)'; ctx.beginPath(); ctx.arc(x, y, rowGap * 0.42, 0, Math.PI * 2); ctx.fill();
     }
-    paintChord(ctx, W, H, { x: 0.5, y: 0.5, size }, '', v);
+    paintChord(ctx, W, H, { x: 0.5, y: 0.5, size }, '', v, true);
   }, [JSON.stringify(data), hover?.s, hover?.f]);
   const at = (e: React.PointerEvent<HTMLCanvasElement>) => {
     const r = e.currentTarget.getBoundingClientRect(), x = (e.clientX - r.left) * (W / r.width), y = (e.clientY - r.top) * (H / r.height);

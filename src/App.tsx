@@ -1,4 +1,6 @@
 import { shiftProject, recKey, recKeyOf, MAIN_REC, RecClip, trimOf, bpmAt, mainShift, recAtOf, sheetClipsOf, sheetClipEnd, sheetHome, SheetClip, clipEnd, barAt, Project, Ratio, CardLayout, Cut, CutSnap, MAIN, defaultProject, defaultLayouts, barBeat, barStart, barLen, beatLen, fmtTime, angleAt, setCutAt, snapTime, normalizeCuts, sheetStart, sheetEnd, sheetIndex, barOfSheet, VideoXf, getXf, withXf, defaultXf, Caption, CaptionStyle, Fx, getFx, LAYOUT_LABEL, clipsOf, timelineEnd, Clip, RATIOS, RATIO_LABEL, MarkKind, Punch, MARK_AMT, cardSpan, FIRST_PAGE, chordPosOf, ChordPos, meterText, unitBpm, isCompound, feltBpb } from './model';
+import { followOf, defaultFollow, pickHand, Follow } from './follow';
+import { trackHands } from './handtrack';
 import { captionStyleOf, styleFor, CAP_SHARED, ownLook, ownPos, setTabSource, TAB_ID, tabCaption } from './render';
 import { CaptionStudio } from './CaptionStudio';
 import { ChordPanel } from './ChordPanel';
@@ -196,6 +198,8 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const [levelGrid, setLevelGrid] = useState(false);   // 회전 슬라이더를 만지는 동안 미리보기에 수평 격자   // 타임라인에서 고른 영상 조각의 파일 (MAIN = 첫 영상)
   const [inOut, setInOut] = useState<{ a: number | null; b: number | null }>({ a: null, b: null });
   const [selCaption, setSelCaption] = useState<string | null>(null);
+  const [followBusy, setFollowBusy] = useState<{ id: string; k: number } | null>(null);   // 손 찾는 중
+  const followStop = useRef<{ stop: boolean }>({ stop: false });
   const [winW, setWinW] = useState(() => window.innerWidth);   // 창 너비 (세로 영상일 때 배치)
   useEffect(() => { const f = () => setWinW(window.innerWidth); window.addEventListener('resize', f); return () => window.removeEventListener('resize', f); }, []);
   const [studioOpen, setStudioOpenS] = useState(false);
@@ -1525,6 +1529,29 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
   const curXf = getXf(project, ratio, curSrcId);
   const curNum = curSrcId === MAIN ? 1 : angles.findIndex(a => a.id === curSrcId) + 2;
   const curSrcName = sources.find(x => x.id === curSrcId)?.name;
+  // 손 따라가기 (자동 짐벌): 지금 고른 영상의 설정·분석
+  const curFollow = followOf(project, curSrcId);
+  const setCurFollow = (patch: Partial<Follow>) => {
+    const p = projRef.current, f = followOf(p, curSrcId); if (!f) return;
+    setProject({ follow: { ...(p.follow || {}), [curSrcId]: { ...f, ...patch } } });
+  };
+  const startFollow = async () => {
+    const id = curSrcId;
+    const el = id === MAIN ? videoRef.current : angles.find(a => a.id === id)?.video || srcMap.get(id);
+    const src = el?.currentSrc || el?.src;
+    if (!src) return;
+    followStop.current = { stop: false };
+    setFollowBusy({ id, k: 0 });
+    try {
+      const r = await trackHands(src, { step: 0.2, onProgress: k => setFollowBusy({ id, k }), signal: followStop.current });
+      if (r.found < 0.15) setMsg({ kind: 'warn', text: `손을 거의 못 찾았어요 (장면의 ${Math.round(r.found * 100)}%). 손이 너무 작거나 어두우면 잘 안 돼요.` });
+      else setMsg({ kind: 'ok', text: `손을 찾았어요 (장면의 ${Math.round(r.found * 100)}%) — 확대·따라가는 속도를 맞춰 보세요.` });
+      const p = projRef.current, old = followOf(p, id);
+      setProject({ follow: { ...(p.follow || {}), [id]: { ...defaultFollow(), ...(old ? { zoom: old.zoom, smooth: old.smooth, hand: old.hand, dz: old.dz } : {}), on: true, step: r.step, tr: r.tr } } });
+    } catch (e: any) {
+      if (e?.message !== '멈춤') setMsg({ kind: 'warn', text: e?.message || '손을 찾지 못했어요.' });
+    } finally { setFollowBusy(null); }
+  };
   const setCurXf = (xf: VideoXf) => setProject({ frames: withXf(projRef.current, ratio, curSrcId, xf) });
 
   // ---------- 효과 ----------
@@ -2217,6 +2244,40 @@ export function App({ cloud, user, admin }: { cloud: Cloud | null; user: CloudUs
             <button type="button" className="btn ghost sm" disabled={!hasVideo || (curXf.crop.l + curXf.crop.t + curXf.crop.r + curXf.crop.b === 0)}
               onClick={() => setCurXf({ ...curXf, crop: { l: 0, t: 0, r: 0, b: 0 } })}>자르기 취소</button>
             <button type="button" className="btn ghost sm" disabled={!hasVideo} onClick={() => setCurXf(defaultXf())}>초기화</button>
+          </div>
+          {/* 손 따라가기 (자동 짐벌) */}
+          <div className="follow-box">
+            <div className="row between">
+              <label htmlFor="follow-on"><b>손 따라가기</b> <span className="dim small">자동 짐벌</span></label>
+              {curFollow && <label className="switch"><input id="follow-on" type="checkbox" role="switch" checked={curFollow.on} onChange={e => setCurFollow({ on: e.target.checked })} aria-label="손 따라가기 켜기" /></label>}
+            </div>
+            {followBusy ? (
+              <div className="row between">
+                <span className="small">손 찾는 중… <span className="mono">{Math.round(followBusy.k * 100)}%</span></span>
+                <button type="button" className="btn ghost sm" onClick={() => { followStop.current.stop = true; }}>멈추기</button>
+              </div>
+            ) : !curFollow ? (<>
+              <p className="small dim">멀리서 찍은 영상에서 손을 찾아 확대하고, 손이 지판을 옮겨 가면 카메라가 짐벌처럼 부드럽게 따라가요.</p>
+              <button type="button" className="btn sm accent" disabled={!hasVideo} onClick={startFollow}>이 영상에서 손 찾기</button>
+            </>) : (<>
+              <div className="field">
+                <label htmlFor="follow-zoom">확대 <span className="mono dim">{curFollow.zoom.toFixed(1)}배</span></label>
+                <input id="follow-zoom" type="range" min="1" max="3" step="0.1" value={curFollow.zoom} onChange={e => setCurFollow({ zoom: parseFloat(e.target.value) })} />
+              </div>
+              <div className="field">
+                <label htmlFor="follow-smooth">따라가는 속도 <span className="mono dim">{curFollow.smooth <= 0.3 ? '빠르게' : curFollow.smooth >= 0.8 ? '느긋하게' : '보통'}</span></label>
+                <input id="follow-smooth" type="range" min="0.15" max="1.2" step="0.05" value={curFollow.smooth} onChange={e => setCurFollow({ smooth: parseFloat(e.target.value) })} />
+              </div>
+              <div className="seg sm" role="radiogroup" aria-label="따라갈 손">
+                {([[-1, `자동${curFollow.hand === -1 ? ` (${pickHand(curFollow) === 0 ? '왼쪽' : '오른쪽'})` : ''}`], [0, '화면 왼쪽 손'], [1, '화면 오른쪽 손']] as const).map(([v, l]) => (
+                  <button key={v} type="button" role="radio" aria-checked={curFollow.hand === v} className={curFollow.hand === v ? 'on' : ''} onClick={() => setCurFollow({ hand: v })}>{l}</button>
+                ))}
+              </div>
+              <div className="row between">
+                <span className="small dim">켜 두면 위의 크기·위치 대신 손을 따라가요</span>
+                <button type="button" className="link small" onClick={startFollow}>다시 찾기</button>
+              </div>
+            </>)}
           </div>
         </section>
 

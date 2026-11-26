@@ -352,6 +352,7 @@ export interface Project {
   trims?: Record<string, Trim>;   // 트랙별 쓰는 부분 (그 파일의 시간, 초) — 'main'·앵글 id·'rec'
   captionStyles: Record<Ratio, CaptionStyle>;
   pip?: Partial<Record<Ratio, PipPos>>;
+  follow?: Record<string, import('./follow').Follow>;   // 손 따라가기(자동 짐벌): 영상 id → 설정·손 위치 기록
   overlays?: Overlay[];   // PIP 영상 줄: 추가 영상을 기준 화면 위에 작게 겹쳐 같이 재생
   chordPos?: Partial<Record<Ratio, ChordPos>>;   // 코드표 위치·크기 (공통)   // PIP 작은 화면 위치·크기 (화면 비율별, 없으면 기본 자리)
   fx: Fx;

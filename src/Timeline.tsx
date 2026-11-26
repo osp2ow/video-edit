@@ -1927,7 +1927,7 @@ export function Timeline(props: Props) {
         <button type="button" className="btn sm" onClick={() => splitAtPlayhead()} title="재생 위치에서 고른 조각을 둘로 자르기 (I). 자른 조각은 끌어서 옮기거나 Delete로 지울 수 있어요">✂ 자르기 <span className="dim">I</span></button>
         <button type="button" className={`btn sm tl-loop ${props.project.cycle?.on ? 'on' : ''}`} disabled={!props.project.cycle} aria-pressed={!!props.project.cycle?.on}
           onClick={() => props.project.cycle && props.onCycle({ ...props.project.cycle, on: !props.project.cycle.on })} title="눈금 줄 맨 위 띠를 끌어서 구간을 만들고, 켜면 그 구간만 반복 재생·추출 (C · 노란 띠 클릭)">🔁 구간 반복 <span className="dim">C</span></button>
-        {props.hasSheet && <button type="button" className={`btn sm tl-loop ${!props.sheetHidden ? 'on' : ''}`} aria-pressed={!props.sheetHidden} onClick={() => props.onSheetHidden(!props.sheetHidden)} title="악보를 영상에 보이기 · 숨기기 (미리보기와 추출 영상 모두)">악보 {props.sheetHidden ? '꺼짐' : '보임'}</button>}
+        <button type="button" className={`btn sm tl-loop ${!props.sheetHidden ? 'on' : ''}`} aria-pressed={!props.sheetHidden} onClick={() => props.onSheetHidden(!props.sheetHidden)} title={props.hasSheet ? '악보 카드를 영상에 보이기 · 숨기기 (미리보기와 추출 영상 모두)' : '악보를 안 쓸 때는 꺼 두세요 — 미리보기의 빈 악보 카드(\'악보를 불러오면 여기에 표시돼요\')가 사라져요'}>악보 카드 {props.sheetHidden ? '꺼짐' : '보임'}</button>
         {props.hasSheet && props.onSheetBpm && (() => {
           const c = sheetClipsOf(props.project, props.nBars).find(x => x.id === selSheet.current);
           if (!c) return null;

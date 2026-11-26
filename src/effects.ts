@@ -2,10 +2,11 @@
 // 순서: 영상(전환·분할·박자 효과) → 비네트 → 악보 카드 → 자막 → 로고 → 플래시 → 인트로/엔딩 카드 → 페이드
 import { colorFilterFor, joinFilter } from './colormatch';
 import { retouchFaces } from './face';
-import { CardLayout, Project, Fx, ColorFilter, TransType, MAIN, getFx, getXf, angleAt, barLen, beatLen, LAYOUT_LABEL, cardSpan, ratioOfWH, cardAlpha, srcAt, CardStyle, cardStyleOf, NEUTRAL_FILTER, sheetClipAt, cardPageAt, FIRST_PAGE, clipFadeAt, Clip, clipsOf, clipEnd, Overlay, overlaysAt } from './model';
+import { CardLayout, Project, Fx, ColorFilter, TransType, MAIN, getFx, getXf, angleAt, barLen, beatLen, LAYOUT_LABEL, cardSpan, ratioOfWH, cardAlpha, srcAt, CardStyle, cardStyleOf, NEUTRAL_FILTER, sheetClipAt, cardPageAt, FIRST_PAGE, clipFadeAt, Clip, clipsOf, clipEnd, Overlay, overlaysAt, Ratio } from './model';
 import { SheetData } from './sheet';
 import { Angle } from './angles';
 import { drawVideo, drawCard, drawCaptions, FONT, safeZones, cardBox } from './render';
+import { followXf } from './follow';
 
 export interface Env {
   master: HTMLVideoElement;
@@ -161,6 +162,16 @@ function drawOverlays(ctx: CanvasRenderingContext2D, W: number, H: number, t: nu
   }
 }
 
+/** 영상 화면 변환 (손 따라가기가 켜진 영상이면 그 시간의 카메라 위치로) */
+function xfFor(env: Env, ratio: Ratio, id: string, v: HTMLVideoElement | null, W: number, H: number, t: number) {
+  const xf = getXf(env.project, ratio, id);
+  if (!v || !v.videoWidth || !env.project.follow?.[id]?.on) return xf;
+  const m = srcAt(env.project, t, env.master.duration || 0);
+  if (!m) return xf;
+  const s = id === MAIN || m.clip.src === id ? m.s : m.s + (env.project.angleOffsets[id] || 0);
+  return followXf(env.project, id, xf, s, v.videoWidth, v.videoHeight, W, H);
+}
+
 /** 앵글 하나(또는 분할·PIP 구성)를 화면 전체에 그리기 */
 export function drawSource(ctx: CanvasRenderingContext2D, W: number, H: number, id: string, t: number, env: Env) {
   const fx = getFx(env.project);
@@ -174,7 +185,8 @@ export function drawSource(ctx: CanvasRenderingContext2D, W: number, H: number, 
   if (cs) {
     // 추가 영상: 분할·앵글 없이 그 영상 하나를 화면 가득
     ctx.filter = base;
-    drawVideo(ctx, W, H, videoFor(env, cs, t), getXf(env.project, ratio, cs));
+    const v = videoFor(env, cs, t);
+    drawVideo(ctx, W, H, v, xfFor(env, ratio, cs, v, W, H, t));
     ctx.filter = prevFilter;
     return;
   }
@@ -192,7 +204,8 @@ export function drawSource(ctx: CanvasRenderingContext2D, W: number, H: number, 
         ctx.filter = ids[i] ? fil(ids[i]) : base; drawCover(ctx, ids[i] ? videoFor(env, ids[i], t) : null, c[0], c[1], cw, ch); });
     }
   } else if (id === 'pip') {
-    drawVideo(ctx, W, H, videoFor(env, MAIN, t), getXf(env.project, ratio, MAIN));
+    const mv = videoFor(env, MAIN, t);
+    drawVideo(ctx, W, H, mv, xfFor(env, ratio, MAIN, mv, W, H, t));
     const small = ids[1] ? videoFor(env, ids[1], t) : null;
     const { x, y, w, h } = pipBox(W, H, env.project);
     ctx.save();
@@ -208,7 +221,8 @@ export function drawSource(ctx: CanvasRenderingContext2D, W: number, H: number, 
     const v = videoFor(env, id, t);
     const use = v || id === MAIN ? id : MAIN;
     ctx.filter = fil(use);
-    drawVideo(ctx, W, H, v || (id === MAIN ? null : videoFor(env, MAIN, t)), getXf(env.project, ratio, use));
+    const vv = v || (id === MAIN ? null : videoFor(env, MAIN, t));
+    drawVideo(ctx, W, H, vv, xfFor(env, ratio, use, vv, W, H, t));
   }
   ctx.filter = prevFilter;
 }

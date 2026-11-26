@@ -249,7 +249,10 @@ export function drawCard(ctx: CanvasRenderingContext2D, W: number, H: number, t:
     ctx.fillStyle = 'rgba(40,36,30,0.55)';
     ctx.font = `500 ${fs}px ${FONT}`;
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
-    ctx.fillText('악보를 불러오면 여기에 표시돼요', g.x + g.w / 2, g.y + (g.h - g.footH) / 2 + g.pad / 2);
+    const my = g.y + (g.h - g.footH) / 2 + g.pad / 2;
+    ctx.fillText('악보를 불러오면 여기에 표시돼요', g.x + g.w / 2, my - fs * 0.7);
+    ctx.font = `400 ${fs * 0.78}px ${FONT}`; ctx.fillStyle = 'rgba(40,36,30,0.42)';
+    ctx.fillText('악보 없이 쓰려면 타임라인의 [악보 카드] 버튼으로 꺼 두세요', g.x + g.w / 2, my + fs * 0.75);
     ctx.restore();
     return;
   }

@@ -557,3 +557,7 @@ input[type="range"] { width: 100%; accent-color: var(--accent); }
 /* 기타 타브 → 지판 표시 켜기 */
 .tab-row { display: flex; align-items: flex-start; gap: 8px; margin: -2px 0 8px; padding: 8px 12px; border: 1px solid var(--line); border-radius: 10px; font-size: 13px; cursor: pointer; }
 .tab-row input { margin-top: 2px; accent-color: var(--accent); }
+/* 손 따라가기 (자동 짐벌) */
+.follow-box { margin-top: 12px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 10px; display: grid; gap: 8px; }
+.follow-box p { margin: 0; }
+.seg.sm button { padding: 6px 4px; font-size: 12px; }

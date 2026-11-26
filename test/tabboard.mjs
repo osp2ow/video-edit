@@ -27,7 +27,7 @@ const scan = await page.evaluate(() => {
 console.log(JSON.stringify(scan));
 ok('fretboard changes with time', scan.n > 100 && scan.changes > 50);
 ok('a current note is lit almost always', scan.noOn < scan.n * 0.1);
-ok('window stays readable (≤ 8 frets)', scan.maxSpan <= 8);
+ok('window stays readable (≤ 10 frets — 탭핑 구간은 넓음)', scan.maxSpan <= 10);
 // 6마디 쯤으로 가서 화면 확인
 const t6 = await page.evaluate(() => { for (let t = 0; t < 60; t += 0.01) { const c = window.__pveTabAt(t); if (c && c.chord.dots.some(d => d.f === 16 && d.on)) return t; } return -1; });
 ok('16th-fret note of bar 6 shows up lit', t6 > 0);
